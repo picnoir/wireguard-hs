@@ -14,8 +14,7 @@ import           Control.Monad.STM                      (atomically)
 import           Control.Monad.Trans.Except             (ExceptT, runExceptT,
                                                          throwE)
 import           Crypto.Noise                           (HandshakeRole (..))
-import           Crypto.Noise.DH                        (dhGenKey, dhPubEq,
-                                                         dhPubToBytes)
+import           Crypto.Noise.DH                        (dhGenKey, dhPubToBytes)
 import qualified Data.ByteArray                         as BA
 import qualified Data.ByteString                        as BS
 import qualified Data.HashMap.Strict                    as HM
@@ -165,8 +164,8 @@ processPacket device@Device{..} _key _psk sock HandshakeResponse{..} = do
     let state1 = initNoise iwait
         outcome = recvSecondMessage state1 encryptedPayload
     case outcome of
-        Left err                            -> throwE (NoiseError err)
-        Right (decryptedPayload, rpub, sks) -> do
+        Left err                      -> throwE (NoiseError err)
+        Right (decryptedPayload, sks) -> do
             now <- liftIO epochTime
             newCounter <- liftIO $ atomically $ newTVar 0
             let newsession = Session receiverIndex senderIndex sks
@@ -175,7 +174,6 @@ processPacket device@Device{..} _key _psk sock HandshakeResponse{..} = do
                     newCounter
             when (BA.length decryptedPayload /= 0) $
                 throwE $ InvalidWGPacketError "empty payload expected"
-            unless (rpub `dhPubEq` remotePub peer) $ throwE RemotePeerNotFoundError
             succeeded <- liftIO $ atomically $ do
                 erased <- eraseInitiatorWait device peer (Just receiverIndex)
                 when erased $ do

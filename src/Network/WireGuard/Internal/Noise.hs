@@ -59,13 +59,11 @@ recvFirstMessageAndReply state0 ciphertext1 plaintext2 = do
         Just rpub -> return (ciphertext2, plaintext1, rpub, extractSessionKey state2)
 
 recvSecondMessage :: NoiseStateWG -> ByteString
-                  -> Either SomeException (ScrubbedBytes, PublicKey, SessionKey)
+                  -> Either SomeException (ScrubbedBytes, SessionKey)
 recvSecondMessage state1 ciphertext2 = do
     (plaintext2, state2) <- readMessage state1 ciphertext2
     unless (handshakeComplete state2) internalError
-    case remoteStaticKey state2 of
-        Nothing   -> internalError
-        Just rpub -> return (plaintext2, rpub, extractSessionKey state2)
+    return (plaintext2, extractSessionKey state2)
 
 encryptMessage :: SessionKey -> Counter -> ScrubbedBytes -> (EncryptedPayload, AuthTag)
 encryptMessage key counter plaintext = (ciphertext, convert authtag)
