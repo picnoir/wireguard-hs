@@ -10,12 +10,8 @@ build-type:          Simple
 extra-source-files:  include/uapi.h, cbits/tun.h
 cabal-version:       >=1.10
 description:
-    This is a userspace implementation of <https://www.wireguard.io WireGuard> ,
-    which is a layer-3 VPN utilizing TUN device and
-    <https://github.com/trevp/noise/blob/master/noise.md Noise> protocol.
-
-    The configuration tool "wg" from original project is also required, check
-    manpage of "wg" for details.
+    nara is a userspace implementation of <https://www.wireguard.io WireGuard> ,
+    a fast, modern and secure VPN based on <https://noiseprotocol.org/ Noise> protocol.
 
 executable nara
   main-is:
