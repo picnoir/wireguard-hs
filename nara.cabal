@@ -1,0 +1,82 @@
+name:                nara
+version:             0.0.0.0
+synopsis:            A userspace WireGuard implementation in Haskell
+license:             GPL-3
+license-file:        LICENSE
+author:              Bin Jin
+maintainer:          bjin@ctrl-d.org
+category:            Network
+build-type:          Simple
+extra-source-files:  include/uapi.h, cbits/tun.h
+cabal-version:       >=1.10
+description:
+    This is a userspace implementation of <https://www.wireguard.io WireGuard> ,
+    which is a layer-3 VPN utilizing TUN device and
+    <https://github.com/trevp/noise/blob/master/noise.md Noise> protocol.
+
+    The configuration tool "wg" from original project is also required, check
+    manpage of "wg" for details.
+
+executable nara
+  main-is:
+    Main.hs
+  other-modules:
+    Network.WireGuard.Core,
+    Network.WireGuard.Daemon,
+    Network.WireGuard.Foreign.In6Addr,
+    Network.WireGuard.Foreign.Key,
+    Network.WireGuard.Foreign.Tun,
+    Network.WireGuard.Foreign.UAPI,
+    Network.WireGuard.Internal.Constant,
+    Network.WireGuard.Internal.IPPacket,
+    Network.WireGuard.Internal.Noise,
+    Network.WireGuard.Internal.Packet,
+    Network.WireGuard.Internal.PacketQueue,
+    Network.WireGuard.Internal.State,
+    Network.WireGuard.Internal.Types,
+    Network.WireGuard.Internal.Util,
+    Network.WireGuard.RPC,
+    Network.WireGuard.TunListener,
+    Network.WireGuard.UdpListener
+  build-depends:
+    async,
+    base == 4.9.*,
+    blake2,
+    bytestring,
+    cacophony >=0.9.2 && <0.10,
+    cereal,
+    conduit,
+    conduit-extra,
+    cryptonite,
+    directory,
+    exceptions,
+    filepath,
+    iproute == 1.7.*,
+    lens,
+    memory == 0.14.*,
+    network == 2.6.*,
+    optparse-applicative,
+    random,
+    stm,
+    streaming-commons,
+    transformers,
+    unix == 2.7.*,
+    unordered-containers
+
+  if os(linux)
+    c-sources: cbits/tun-linux.c
+    cpp-options: -DOS_LINUX
+  if os(darwin)
+    c-sources: cbits/tun-macos.c
+    cpp-options: -DOS_MACOS
+  if !os(linux) && !os(darwin)
+    buildable: False
+
+  ghc-options:
+    -Wall -O2 -threaded -rtsopts "-with-rtsopts=-N -c"
+  hs-source-dirs:
+    src
+  include-dirs:
+    include
+  default-language:
+    Haskell2010
