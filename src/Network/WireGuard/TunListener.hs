@@ -31,18 +31,18 @@ runTunListener fds readTunChan writeTunChan = loop fds []
 
 handleRead :: PacketQueue TunPacket -> Fd -> IO ()
 handleRead readTunChan fd = allocaBytes tunReadBufferLength $ \buf ->
-    forever (readFd buf fd >>= atomically . pushPacketQueue readTunChan)
+    forever (readTun buf fd >>= atomically . pushPacketQueue readTunChan)
 
 handleWrite :: PacketQueue TunPacket -> Fd -> IO ()
 handleWrite writeTunChan fd =
-    forever (atomically (popPacketQueue writeTunChan) >>= writeFd fd)
+    forever (atomically (popPacketQueue writeTunChan) >>= writeTun fd)
 
-readFd :: BA.ByteArray ba => Ptr Word8 -> Fd -> IO ba
-readFd buf fd = do
+readTun :: BA.ByteArray ba => Ptr Word8 -> Fd -> IO ba
+readTun buf fd = do
     nbytes <- tunReadBuf fd buf (fromIntegral tunReadBufferLength)
     snd <$> BA.allocRet (fromIntegral nbytes)
         (\ptr -> copyMemory ptr buf nbytes >> zeroMemory buf nbytes)
 
-writeFd :: BA.ByteArrayAccess ba => Fd -> ba -> IO ()
-writeFd fd ba = BA.withByteArray ba $ \ptr -> do
+writeTun :: BA.ByteArrayAccess ba => Fd -> ba -> IO ()
+writeTun fd ba = BA.withByteArray ba $ \ptr -> do
     void $ tunWriteBuf fd ptr (fromIntegral (BA.length ba))
