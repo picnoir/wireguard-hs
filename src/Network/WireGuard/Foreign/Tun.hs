@@ -2,18 +2,17 @@
 
 module Network.WireGuard.Foreign.Tun
   ( openTun
-  , fdReadBuf
-  , fdWriteBuf
+  , tunReadBuf
+  , tunWriteBuf
   ) where
 
-import           System.Posix.Types (Fd (..))
+import           Control.Concurrent     (threadWaitRead, threadWaitWrite)
+import           Control.Monad          (forM_)
+import           System.Posix.Internals (setNonBlockingFD)
+import           System.Posix.Types     (Fd (..))
 
 import           Foreign
 import           Foreign.C
-
-#ifdef OS_LINUX
-import           System.Posix.IO    (fdReadBuf, fdWriteBuf)
-#endif
 
 openTun :: String -> Int -> IO (Maybe [Fd])
 openTun intfName threads =
@@ -21,25 +20,33 @@ openTun intfName threads =
     allocaArray threads $ \fds_c -> do
         res <- tun_alloc_c intf_name_c (fromIntegral threads) fds_c  -- TODO: handle exception
         if res > 0
-            then Just . map Fd <$> peekArray (fromIntegral res) fds_c
-            else return Nothing
+          then do
+            fds <- peekArray (fromIntegral res) fds_c
+            forM_ fds $ \fd -> setNonBlockingFD fd True
+            return (Just (map Fd fds))
+          else return Nothing
 
-foreign import ccall safe "tun.h tun_alloc" tun_alloc_c :: CString -> CInt -> Ptr CInt -> IO CInt
+tunReadBuf :: Fd -> Ptr Word8 -> CSize -> IO CSize
+tunReadBuf _fd _buf 0 = return 0
+tunReadBuf fd buf nbytes =
+    fmap fromIntegral $
+        throwErrnoIfMinus1RetryMayBlock "tunReadBuf"
+            (tun_read_c (fromIntegral fd) (castPtr buf) nbytes)
+                (threadWaitRead fd)
+
+tunWriteBuf :: Fd -> Ptr Word8 -> CSize -> IO CSize
+tunWriteBuf fd buf len =
+    fmap fromIntegral $
+        throwErrnoIfMinus1RetryMayBlock "tunWriteBuf"
+            (tun_write_c (fromIntegral fd) (castPtr buf) len)
+                (threadWaitWrite fd)
+
+foreign import ccall unsafe "tun.h tun_alloc" tun_alloc_c :: CString -> CInt -> Ptr CInt -> IO CInt
 
 #ifdef OS_MACOS
-fdReadBuf :: Fd -> Ptr Word8 -> CSize -> IO CSize
-fdReadBuf _fd _buf 0 = return 0
-fdReadBuf fd buf nbytes =
-    fmap fromIntegral $
-        throwErrnoIfMinus1Retry "fdReadBuf" $
-            utun_read_c (fromIntegral fd) (castPtr buf) nbytes
-
-fdWriteBuf :: Fd -> Ptr Word8 -> CSize -> IO CSize
-fdWriteBuf fd buf len =
-    fmap fromIntegral $
-        throwErrnoIfMinus1Retry "fdWriteBuf" $
-            utun_write_c (fromIntegral fd) (castPtr buf) len
-
-foreign import ccall safe "tun.h utun_read" utun_read_c :: CInt -> Ptr CChar -> CSize -> IO CSize
-foreign import ccall safe "tun.h utun_write" utun_write_c :: CInt -> Ptr CChar -> CSize -> IO CSize
+foreign import ccall unsafe "tun.h utun_read" tun_read_c :: CInt -> Ptr CChar -> CSize -> IO CSize
+foreign import ccall unsafe "tun.h utun_write" tun_write_c :: CInt -> Ptr CChar -> CSize -> IO CSize
+#else
+foreign import ccall unsafe "read" tun_read_c :: CInt -> Ptr CChar -> CSize -> IO CSize
+foreign import ccall unsafe "write" tun_write_c :: CInt -> Ptr CChar -> CSize -> IO CSize
 #endif

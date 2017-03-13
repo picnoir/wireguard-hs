@@ -14,17 +14,11 @@ import           Foreign.Marshal.Alloc                  (allocaBytes)
 import           Foreign.Ptr                            (Ptr)
 import           System.Posix.Types                     (Fd)
 
-import           Network.WireGuard.Foreign.Tun          (fdReadBuf, fdWriteBuf)
-
+import           Network.WireGuard.Foreign.Tun
 import           Network.WireGuard.Internal.Constant
 import           Network.WireGuard.Internal.PacketQueue
 import           Network.WireGuard.Internal.Types
 import           Network.WireGuard.Internal.Util
-
-#ifdef OS_LINUX
-import           Control.Concurrent                     (threadWaitRead,
-                                                         threadWaitWrite)
-#endif
 
 runTunListener :: [Fd] -> PacketQueue TunPacket -> PacketQueue TunPacket -> IO ()
 runTunListener fds readTunChan writeTunChan = loop fds []
@@ -45,16 +39,10 @@ handleWrite writeTunChan fd =
 
 readFd :: BA.ByteArray ba => Ptr Word8 -> Fd -> IO ba
 readFd buf fd = do
-#ifdef OS_LINUX
-    threadWaitRead fd
-#endif
-    nbytes <- fdReadBuf fd buf (fromIntegral tunReadBufferLength)
+    nbytes <- tunReadBuf fd buf (fromIntegral tunReadBufferLength)
     snd <$> BA.allocRet (fromIntegral nbytes)
         (\ptr -> copyMemory ptr buf nbytes >> zeroMemory buf nbytes)
 
 writeFd :: BA.ByteArrayAccess ba => Fd -> ba -> IO ()
 writeFd fd ba = BA.withByteArray ba $ \ptr -> do
-#ifdef OS_LINUX
-    threadWaitWrite fd
-#endif
-    void $ fdWriteBuf fd ptr (fromIntegral (BA.length ba))
+    void $ tunWriteBuf fd ptr (fromIntegral (BA.length ba))
