@@ -15,7 +15,8 @@ $ stack install
 ### Usage
 
 The following command will create a TUN device named `wg0` and then daemonize
-to background.
+to background. Note that on macOS, the device name has to be like
+`utun1` or `utun2`. Root privilege is also required.
 ~~~
 # nara wg0
 ~~~
