@@ -1,7 +1,10 @@
 resolver: lts-8.4
 packages:
 - '.'
-extra-deps:
-- cacophony-0.9.2
+- location:
+    git: git://github.com/centromere/cacophony.git
+    commit: b7a8cff36d8966b0e274cdb4a338ef581be0d737
+  extra-dep: true
+extra-deps: []
 flags: {}
 extra-package-dbs: []

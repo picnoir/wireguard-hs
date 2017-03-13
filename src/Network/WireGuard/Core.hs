@@ -14,7 +14,8 @@ import           Control.Monad.STM                      (atomically)
 import           Control.Monad.Trans.Except             (ExceptT, runExceptT,
                                                          throwE)
 import           Crypto.Noise                           (HandshakeRole (..))
-import           Crypto.Noise.DH                        (dhGenKey, dhPubToBytes)
+import           Crypto.Noise.DH                        (dhGenKey, dhPubEq,
+                                                         dhPubToBytes)
 import qualified Data.ByteArray                         as BA
 import qualified Data.ByteString                        as BS
 import qualified Data.HashMap.Strict                    as HM
@@ -216,11 +217,11 @@ processPacket device@Device{..} _key _psk sock PacketData{..} = do
                     IPv4Packet src4 _ -> do
                         peer' <- assertJust SourceAddrBlockedError $
                             RT.lookup (makeAddrRange src4 32) <$> liftIO (readTVarIO routeTable4)
-                        when (remotePub peer /= remotePub peer') $ throwE SourceAddrBlockedError
+                        unless (remotePub peer `dhPubEq` remotePub peer') $ throwE SourceAddrBlockedError
                     IPv6Packet src6 _ -> do
                         peer' <- assertJust SourceAddrBlockedError $
                             RT.lookup (makeAddrRange src6 128) <$> liftIO (readTVarIO routeTable6)
-                        when (remotePub peer /= remotePub peer') $ throwE SourceAddrBlockedError
+                        unless (remotePub peer `dhPubEq` remotePub peer') $ throwE SourceAddrBlockedError
                 liftIO $ atomically $ writeTVar (lastReceiveTime peer) now
                 liftIO $ atomically $ modifyTVar' (receivedBytes peer) (+fromIntegral (BA.length decryptedPayload))
               else do
@@ -281,8 +282,8 @@ checkAndTryInitiateHandshake device key psk chan peer@Peer{..} endp now = do
         ma <- readTVar tvar
         case ma of
             Just a  | now > getStopTime a -> erase >> return False
-            Just _                        -> return True
-            Nothing                       -> return False
+            Just _  -> return True
+            Nothing -> return False
 
 
 tryInitiateHandshakeIfEmpty :: Device -> KeyPair -> Maybe PresharedKey
