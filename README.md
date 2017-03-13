@@ -6,17 +6,18 @@ a fast, modern and secure VPN based on [Noise](https://noiseprotocol.org/) proto
 
 Only Linux and macOS are supported at this moment.
 
-To build **nara**, download and install [haskell-stack](https://github.com/commercialhaskell/stack) first.
+To build **nara**, download and install [haskell-stack](https://www.haskellstack.org) first.
 ~~~
-$ stack setup
+$ stack setup   # This will download and install GHC in a sandboxed environment,
+                # optional if stack has been configured to use global GHC.
 $ stack install
 ~~~
 
 ### Usage
 
 The following command will create a TUN device named `wg0` and then daemonize
-to background. Note that on macOS, the device name has to be like
-`utun1` or `utun2`. Root privilege is also required.
+to background. On macOS, the device name has to be like `utun1` or `utun2`.
+Root privilege is also required.
 ~~~
 # nara wg0
 ~~~
