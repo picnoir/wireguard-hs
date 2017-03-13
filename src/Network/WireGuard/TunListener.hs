@@ -1,6 +1,3 @@
-{-# LANGUAGE CPP             #-}
-{-# LANGUAGE RecordWildCards #-}
-
 module Network.WireGuard.TunListener
   ( runTunListener
   ) where
