@@ -34,7 +34,6 @@ runDaemon intfName sockPath tunFds = do
     tunListenerThread <- async $ runTunListener tunFds readTunChan writeTunChan
 
     -- TODO: Support per-host packet queue
-    -- TODO: Add timestamp and discard really ancient UDP packets
     readUdpChan <- atomically $ newPacketQueue maxQueuedUdpPackets
     writeUdpChan <- atomically $ newPacketQueue maxQueuedUdpPackets
     udpListenerThread <- async $ runUdpListener device readUdpChan writeUdpChan

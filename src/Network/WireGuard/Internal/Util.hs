@@ -7,6 +7,7 @@ module Network.WireGuard.Internal.Util
   , catchIOExceptionAnd
   , catchSomeExceptionAnd
   , withJust
+  , dropUntilM
   , zeroMemory
   , copyMemory
   ) where
@@ -51,6 +52,15 @@ withJust mma func = do
     case ma of
         Nothing -> return ()
         Just a  -> func a
+
+dropUntilM :: Monad m => (a -> Bool) -> m a -> m a
+dropUntilM cond ma = loop
+  where
+    loop = do
+        a <- ma
+        if cond a
+          then return a
+          else loop
 
 zeroMemory :: Ptr a -> CSize -> IO ()
 zeroMemory dest nbytes = memset dest 0 (fromIntegral nbytes)

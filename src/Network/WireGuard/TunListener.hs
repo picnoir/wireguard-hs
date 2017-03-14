@@ -9,6 +9,7 @@ import qualified Data.ByteArray                         as BA
 import           Data.Word                              (Word8)
 import           Foreign.Marshal.Alloc                  (allocaBytes)
 import           Foreign.Ptr                            (Ptr)
+import           System.Posix.Time                      (epochTime)
 import           System.Posix.Types                     (Fd)
 
 import           Network.WireGuard.Foreign.Tun
@@ -17,7 +18,7 @@ import           Network.WireGuard.Internal.PacketQueue
 import           Network.WireGuard.Internal.Types
 import           Network.WireGuard.Internal.Util
 
-runTunListener :: [Fd] -> PacketQueue TunPacket -> PacketQueue TunPacket -> IO ()
+runTunListener :: [Fd] -> PacketQueue (Time, TunPacket) -> PacketQueue TunPacket -> IO ()
 runTunListener fds readTunChan writeTunChan = loop fds []
   where
     loop [] asyncs = mapM_ wait asyncs
@@ -26,9 +27,10 @@ runTunListener fds readTunChan writeTunChan = loop fds []
         withAsync (retryWithBackoff $ handleWrite writeTunChan fd) $ \wt ->
             loop rest (rt:wt:asyncs)
 
-handleRead :: PacketQueue TunPacket -> Fd -> IO ()
+handleRead :: PacketQueue (Time, TunPacket) -> Fd -> IO ()
 handleRead readTunChan fd = allocaBytes tunReadBufferLength $ \buf ->
-    forever (readTun buf fd >>= atomically . pushPacketQueue readTunChan)
+    forever (((,) <$> epochTime <*> readTun buf fd)
+        >>= atomically . pushPacketQueue readTunChan)
 
 handleWrite :: PacketQueue TunPacket -> Fd -> IO ()
 handleWrite writeTunChan fd =

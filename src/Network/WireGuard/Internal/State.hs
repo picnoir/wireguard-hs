@@ -193,12 +193,18 @@ getSession peer = do
         []    -> return Nothing
         (s:_) -> return (Just s)
 
-waitForSession :: Peer -> STM Session
-waitForSession peer = do
-    sessions' <- readTVar (sessions peer)
-    case sessions' of
-        []    -> retry
-        (s:_) -> return s
+waitForSession :: Int -> Peer -> IO (Maybe Session)
+waitForSession timelimit peer = do
+    getTimeout <- registerDelay timelimit
+    atomically $ do
+        sessions' <- readTVar (sessions peer)
+        case sessions' of
+            []    -> do
+                timeout <- readTVar getTimeout
+                if timeout
+                  then return Nothing
+                  else retry
+            (s:_) -> return (Just s)
 
 findSession :: Peer -> Index -> STM (Maybe (Either ResponderWait Session))
 findSession peer index = do

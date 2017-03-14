@@ -45,7 +45,7 @@ import           Network.WireGuard.Internal.Types
 import           Network.WireGuard.Internal.Util
 
 runCore :: Device
-        -> PacketQueue TunPacket -> PacketQueue TunPacket
+        -> PacketQueue (Time, TunPacket) -> PacketQueue TunPacket
         -> PacketQueue UdpPacket -> PacketQueue UdpPacket
         -> IO ()
 runCore device readTunChan writeTunChan readUdpChan writeUdpChan = do
@@ -66,9 +66,11 @@ runCore device readTunChan writeTunChan readUdpChan writeUdpChan = do
         withAsync (retryWithBackoff $ handleReadUdp device readUdpChan writeTunChan writeUdpChan) $ \ru ->
             loop (x-1) (rt:ru:asyncs)
 
-handleReadTun :: Device -> PacketQueue TunPacket -> PacketQueue UdpPacket -> IO ()
+handleReadTun :: Device -> PacketQueue (Time, TunPacket) -> PacketQueue UdpPacket -> IO ()
 handleReadTun device readTunChan writeUdpChan = forever $ do
-    tunPacket <- atomically $ popPacketQueue readTunChan
+    earliestToProcess <- (`addTime` (-handshakeRetryTime)) <$> epochTime
+    (_, tunPacket) <- dropUntilM ((>=earliestToProcess).fst) $
+        atomically $ popPacketQueue readTunChan
     res <- runExceptT $ processTunPacket device writeUdpChan tunPacket
     case res of
         Right udpPacket -> atomically $ pushPacketQueue writeUdpChan udpPacket
@@ -106,7 +108,7 @@ processTunPacket device@Device{..} writeUdpChan packet = do
             now0 <- liftIO epochTime
             endp0 <- assertJust EndPointUnknownError $ liftIO $ readTVarIO (endPoint peer)
             liftIO $ void $ checkAndTryInitiateHandshake device key psk writeUdpChan peer endp0 now0
-            liftIO $ atomically $ waitForSession peer
+            assertJust OutdatedPacketError $ liftIO $ waitForSession (handshakeRetryTime * 1000000) peer
     nonce <- liftIO $ atomically $ nextNonce session
     let (msg, authtag) = encryptMessage (sessionKey session) nonce packet
         encrypted = runPut $ buildPacket (error "internal error") $
