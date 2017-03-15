@@ -4,7 +4,6 @@ module Network.WireGuard.TunListener
 
 import           Control.Concurrent.Async               (wait, withAsync)
 import           Control.Monad                          (forever, void)
-import           Control.Monad.STM                      (atomically)
 import qualified Data.ByteArray                         as BA
 import           Data.Word                              (Word8)
 import           Foreign.Marshal.Alloc                  (allocaBytes)
@@ -29,12 +28,11 @@ runTunListener fds readTunChan writeTunChan = loop fds []
 
 handleRead :: PacketQueue (Time, TunPacket) -> Fd -> IO ()
 handleRead readTunChan fd = allocaBytes tunReadBufferLength $ \buf ->
-    forever (((,) <$> epochTime <*> readTun buf fd)
-        >>= atomically . pushPacketQueue readTunChan)
+    forever (((,) <$> epochTime <*> readTun buf fd) >>= pushPacketQueue readTunChan)
 
 handleWrite :: PacketQueue TunPacket -> Fd -> IO ()
 handleWrite writeTunChan fd =
-    forever (atomically (popPacketQueue writeTunChan) >>= writeTun fd)
+    forever (popPacketQueue writeTunChan >>= writeTun fd)
 
 readTun :: BA.ByteArray ba => Ptr Word8 -> Fd -> IO ba
 readTun buf fd = do

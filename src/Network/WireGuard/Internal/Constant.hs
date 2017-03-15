@@ -21,9 +21,6 @@ mac2Length = 16
 maxQueuedUdpPackets :: Int
 maxQueuedUdpPackets = 4096
 
-maxQueuedTunPackets :: Int
-maxQueuedTunPackets = 4096
-
 udpReadBufferLength :: Int
 udpReadBufferLength = 4096
 

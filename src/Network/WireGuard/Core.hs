@@ -69,24 +69,23 @@ runCore device readTunChan writeTunChan readUdpChan writeUdpChan = do
 handleReadTun :: Device -> PacketQueue (Time, TunPacket) -> PacketQueue UdpPacket -> IO ()
 handleReadTun device readTunChan writeUdpChan = forever $ do
     earliestToProcess <- (`addTime` (-handshakeRetryTime)) <$> epochTime
-    (_, tunPacket) <- dropUntilM ((>=earliestToProcess).fst) $
-        atomically $ popPacketQueue readTunChan
+    (_, tunPacket) <- dropUntilM ((>=earliestToProcess).fst) $ popPacketQueue readTunChan
     res <- runExceptT $ processTunPacket device writeUdpChan tunPacket
     case res of
-        Right udpPacket -> atomically $ pushPacketQueue writeUdpChan udpPacket
+        Right udpPacket -> pushPacketQueue writeUdpChan udpPacket
         Left err        -> hPutStrLn stderr (show err) -- TODO: proper logging
 
 handleReadUdp :: Device -> PacketQueue UdpPacket -> PacketQueue TunPacket
               -> PacketQueue UdpPacket
               -> IO ()
 handleReadUdp device readUdpChan writeTunChan writeUdpChan = forever $ do
-    udpPacket <- atomically $ popPacketQueue readUdpChan
+    udpPacket <- popPacketQueue readUdpChan
     res <- runExceptT $ processUdpPacket device udpPacket
     case res of
         Left err      -> hPutStrLn stderr (show err) -- TODO: proper logging
         Right mpacket -> case mpacket of
-            Just (Right tunp) -> atomically $ pushPacketQueue writeTunChan tunp
-            Just (Left  udpp) -> atomically $ pushPacketQueue writeUdpChan udpp
+            Just (Right tunp) -> pushPacketQueue writeTunChan tunp
+            Just (Left  udpp) -> pushPacketQueue writeUdpChan udpp
             Nothing           -> return ()
 
 processTunPacket :: Device -> PacketQueue UdpPacket -> TunPacket
@@ -263,7 +262,7 @@ runHeartbeat device key chan = do
                     let (msg, authtag) = encryptMessage (sessionKey session) nonce mempty
                         keepalivePacket = runPut $ buildPacket (error "internal error") $
                             PacketData (theirIndex session) nonce msg authtag
-                    atomically $ pushPacketQueue chan (keepalivePacket, endp)
+                    pushPacketQueue chan (keepalivePacket, endp)
         when (lastrecv < lastsent && lastkeep < lastsent && lastsent <= addTime now (-(sessionKeepaliveTime + handshakeRetryTime))) $ do
             atomically $ writeTVar (lastTransferTime peer) now
             atomically $ writeTVar (lastReceiveTime peer) now
@@ -298,7 +297,7 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
     let state0 = newNoiseState key psk ekey (Just remotePub) InitiatorRole
         Right (payload, state1) = sendFirstMessage state0 timestamp
         timestamp = BA.convert (genTai64n now)
-    atomically $ do
+    mpacket <- atomically $ do
         isEmpty <- isNothing <$> readTVar initiatorWait
         if isEmpty
           then do
@@ -310,9 +309,11 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
             writeTVar initiatorWait (Just iwait)
             let packet = runPut $ buildPacket (getMac1 remotePub psk) $
                     HandshakeInitiation index payload
-            void $ tryPushPacketQueue chan $ (packet, endp)
-            return True
-          else return False
+            return (Just packet)
+          else return Nothing
+    case mpacket of
+        Just packet -> pushPacketQueue chan (packet, endp) >> return True
+        Nothing     -> return False
 
 genTai64n :: Time -> TAI64n
 genTai64n (CTime now) = runPut $ do

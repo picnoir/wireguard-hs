@@ -46,11 +46,11 @@ handlePort bindPort readUdpChan writeUdpChan = retryWithBackoff $
 handleRead :: Socket -> PacketQueue UdpPacket -> IO ()
 handleRead sock readUdpChan = forever $ do
     packet <- recvFrom sock udpReadBufferLength
-    void $ atomically $ tryPushPacketQueue readUdpChan packet
+    pushPacketQueue readUdpChan packet
 
 handleWrite :: Socket -> PacketQueue UdpPacket -> IO ()
 handleWrite sock writeUdpChan = forever $ do
-    (packet, dest) <- atomically $ popPacketQueue writeUdpChan
+    (packet, dest) <- popPacketQueue writeUdpChan
     void $ sendTo sock packet dest
 
 waitNewVar :: Eq a => a -> TVar a -> STM a

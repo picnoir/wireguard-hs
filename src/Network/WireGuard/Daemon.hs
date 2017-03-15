@@ -19,7 +19,6 @@ import           Network.WireGuard.RPC                  (runRPC)
 import           Network.WireGuard.TunListener          (runTunListener)
 import           Network.WireGuard.UdpListener          (runUdpListener)
 
-import           Network.WireGuard.Internal.Constant
 import           Network.WireGuard.Internal.PacketQueue
 import           Network.WireGuard.Internal.Util
 
@@ -29,13 +28,13 @@ runDaemon intfName sockPath tunFds = do
 
     rpcThread <- async $ runRPC sockPath device
 
-    readTunChan <- atomically $ newPacketQueue maxQueuedTunPackets
-    writeTunChan <- atomically $ newPacketQueue maxQueuedTunPackets
+    readTunChan <- newPacketQueue
+    writeTunChan <- newPacketQueue
     tunListenerThread <- async $ runTunListener tunFds readTunChan writeTunChan
 
     -- TODO: Support per-host packet queue
-    readUdpChan <- atomically $ newPacketQueue maxQueuedUdpPackets
-    writeUdpChan <- atomically $ newPacketQueue maxQueuedUdpPackets
+    readUdpChan <- newPacketQueue
+    writeUdpChan <- newPacketQueue
     udpListenerThread <- async $ runUdpListener device readUdpChan writeUdpChan
 
     coreThread <- async $ runCore device readTunChan writeTunChan readUdpChan writeUdpChan
