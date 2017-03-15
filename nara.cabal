@@ -69,7 +69,7 @@ executable nara
     buildable: False
 
   ghc-options:
-    -Wall -O2 -threaded -rtsopts "-with-rtsopts=-N -c"
+    -Wall -O2 -threaded
   hs-source-dirs:
     src
   include-dirs:
