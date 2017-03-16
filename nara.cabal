@@ -13,6 +13,12 @@ description:
     nara is a userspace implementation of <https://www.wireguard.io WireGuard> ,
     a fast, modern and secure VPN based on <https://noiseprotocol.org/ Noise> protocol.
 
+flag static
+  description:
+    enable static build
+  default:
+    False
+
 executable nara
   main-is:
     Main.hs
@@ -70,6 +76,10 @@ executable nara
 
   ghc-options:
     -Wall -O2 -threaded
+  if flag(static)
+    ghc-options:
+      -optl-static
+
   hs-source-dirs:
     src
   include-dirs:
