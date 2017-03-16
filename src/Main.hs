@@ -55,7 +55,7 @@ main = do
     let sockPath = runPath </> "wireguard" </> (intfName ++ ".sock")
     createDirectoryIfMissing False (takeDirectory sockPath)
 
-    fds <- maybe (die "failed to open device") return =<< openTun intfName =<< getNumCapabilities
+    fds <- openTun intfName =<< getNumCapabilities
 
     let runner daemon | foreground = daemon
                       | otherwise  = void $ forkProcess $ do

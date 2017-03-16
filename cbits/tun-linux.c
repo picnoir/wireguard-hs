@@ -1,5 +1,6 @@
 #include <string.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/if_tun.h>
 #include <net/if.h>
@@ -12,8 +13,10 @@ int tun_alloc(const char *dev_name, int threads, int *fds) {
     struct ifreq ifr;
     int fd, i;
 
-    if (!dev_name)
+    if (!dev_name) {
+        errno = EINVAL;
         return -1;
+    }
 
     memset(&ifr, 0, sizeof(ifr));
 

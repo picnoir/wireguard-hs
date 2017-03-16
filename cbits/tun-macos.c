@@ -21,6 +21,7 @@
 #include <string.h>
 #include <sys/types.h>
 
+#include <errno.h>
 #include <net/if_utun.h>
 #include <netinet/ip.h>
 #include <sys/ioctl.h>
@@ -36,14 +37,17 @@ int tun_alloc(const char *dev_name, int threads, int *fds) {
     struct sockaddr_ctl sc;
     int fd, utun_num;
 
-    if (!dev_name || sscanf(dev_name, "utun%d", &utun_num) != 1)
+    if (!dev_name || sscanf(dev_name, "utun%d", &utun_num) != 1) {
+        errno = EINVAL;
         return -1;
+    }
 
     memset(&ctlInfo, 0, sizeof(ctlInfo));
 
     if (strlcpy(ctlInfo.ctl_name,
                 UTUN_CONTROL_NAME,
                 sizeof(ctlInfo.ctl_name)) >= sizeof(ctlInfo.ctl_name)) {
+        errno = EINVAL;
         return -1;
     }
 
