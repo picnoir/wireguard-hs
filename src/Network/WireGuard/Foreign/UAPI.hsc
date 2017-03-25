@@ -17,6 +17,7 @@ module Network.WireGuard.Foreign.UAPI
   , writeConfig
   ) where
 
+import           Control.Monad                     (unless)
 import           Data.ByteString.Internal          (ByteString (..))
 import           Network.Socket.Internal           (HostAddress, HostAddress6,
                                                     SockAddr, peekSockAddr,
@@ -64,6 +65,10 @@ deviceFlagRemovePrivateKey   = #{const WGDEVICE_REMOVE_PRIVATE_KEY}   :: DeviceF
 deviceFlagRemovePresharedKey = #{const WGDEVICE_REMOVE_PRESHARED_KEY} :: DeviceFlags
 deviceFlagRemoveFwmark       = #{const WGDEVICE_REMOVE_FWMARK}        :: DeviceFlags
 
+type VersionMagicType = #{type typeof((struct wgdevice){0}.version_magic)}
+
+apiVersionMagic = #{const WG_API_VERSION_MAGIC } :: VersionMagicType
+
 data WgDevice = WgDevice
               { deviceInterface :: ! String
               , deviceFlags     :: ! DeviceFlags
@@ -85,7 +90,7 @@ instance Storable WgIpmask where
         ip <- case ipFamily of
             #{const AF_INET} -> Left <$> #{peek struct wgipmask, ip4.s_addr} ptr
             #{const AF_INET6} -> Right . fromIn6Addr <$> #{peek struct wgipmask, ip6} ptr
-            _ -> error "WgIpmask.peek: unknown ipfamily"
+            _ -> fail "WgIpmask.peek: unknown ipfamily"
         cidr <- #{peek struct wgipmask, cidr} ptr
         return (WgIpmask ip cidr)
 
@@ -137,18 +142,22 @@ instance Storable WgPeer where
 instance Storable WgDevice where
     sizeOf _              = #{size struct wgdevice}
     alignment _           = #{alignment struct wgdevice}
-    peek ptr              = WgDevice <$> peekCString (ptr `plusPtr` #{offset struct wgdevice, interface})
-                                     <*> #{peek struct wgdevice, flags} ptr
-                                     <*> (K.toByteString <$> #{peek struct wgdevice, public_key} ptr)
-                                     <*> (K.toByteString <$> #{peek struct wgdevice, private_key} ptr)
-                                     <*> (K.toByteString <$> #{peek struct wgdevice, preshared_key} ptr)
-                                     <*> #{peek struct wgdevice, fwmark} ptr
-                                     <*> #{peek struct wgdevice, port} ptr
-                                     <*> #{peek struct wgdevice, num_peers} ptr
+    peek ptr              = do
+        magic <- #{peek struct wgdevice, version_magic} ptr
+        unless (magic == apiVersionMagic) $ fail "unexpected version_magic"
+        WgDevice <$> peekCString (ptr `plusPtr` #{offset struct wgdevice, interface})
+                 <*> #{peek struct wgdevice, flags} ptr
+                 <*> (K.toByteString <$> #{peek struct wgdevice, public_key} ptr)
+                 <*> (K.toByteString <$> #{peek struct wgdevice, private_key} ptr)
+                 <*> (K.toByteString <$> #{peek struct wgdevice, preshared_key} ptr)
+                 <*> #{peek struct wgdevice, fwmark} ptr
+                 <*> #{peek struct wgdevice, port} ptr
+                 <*> #{peek struct wgdevice, num_peers} ptr
     poke ptr self@WgDevice{..}
-        | length deviceInterface >= #{const IFNAMSIZ} = error "interface name is too long"
+        | length deviceInterface >= #{const IFNAMSIZ} = fail "interface name is too long"
         | otherwise                                   = do
             zeroMemory ptr $ fromIntegral $ sizeOf self
+            #{poke struct wgdevice, version_magic} ptr apiVersionMagic
             pokeArray0 (0 :: Word8) (ptr `plusPtr` #{offset struct wgdevice, interface}) (map (fromIntegral.ord) deviceInterface)
             #{poke struct wgdevice, flags} ptr deviceFlags
             #{poke struct wgdevice, public_key} ptr (K.fromByteString devicePubkey)
