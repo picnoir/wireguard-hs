@@ -19,27 +19,45 @@ flag static
   default:
     False
 
-executable nara
-  main-is:
-    Main.hs
-  other-modules:
+executable nara-exe
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:
+    -Wall -Werror -O2 -threaded
+  if flag(static)
+    ghc-options:
+      -optl-static
+  build-depends:       
+    base,
+    nara,
+    directory,
+    filepath,
+    unix == 2.7.*,
+    optparse-applicative
+  default-language: 
+    Haskell2010
+
+library
+--  main-is:
+--    Main.hs
+  exposed-modules:
     Network.WireGuard.Core,
     Network.WireGuard.Daemon,
     Network.WireGuard.Foreign.In6Addr,
     Network.WireGuard.Foreign.Key,
     Network.WireGuard.Foreign.Tun,
     Network.WireGuard.Foreign.UAPI,
+    Network.WireGuard.RPC,
+    Network.WireGuard.TunListener,
+    Network.WireGuard.UdpListener,
+    Network.WireGuard.Internal.Util,
     Network.WireGuard.Internal.Constant,
     Network.WireGuard.Internal.IPPacket,
     Network.WireGuard.Internal.Noise,
     Network.WireGuard.Internal.Packet,
     Network.WireGuard.Internal.PacketQueue,
     Network.WireGuard.Internal.State,
-    Network.WireGuard.Internal.Types,
-    Network.WireGuard.Internal.Util,
-    Network.WireGuard.RPC,
-    Network.WireGuard.TunListener,
-    Network.WireGuard.UdpListener
+    Network.WireGuard.Internal.Types
   build-depends:
     async,
     base == 4.9.*,
@@ -75,7 +93,7 @@ executable nara
     buildable: False
 
   ghc-options:
-    -Wall -O2 -threaded
+    -Wall -Werror -O2 
   if flag(static)
     ghc-options:
       -optl-static
@@ -86,3 +104,17 @@ executable nara
     include
   default-language:
     Haskell2010
+
+test-suite nara-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  hs-source-dirs:
+      tests/spec
+  ghc-options: -Wall
+  build-depends:
+      base == 4.9.*
+    , hspec
+    , nara
+  other-modules:
+    Network.WireGuard.RPCSpec
+  default-language: Haskell2010
