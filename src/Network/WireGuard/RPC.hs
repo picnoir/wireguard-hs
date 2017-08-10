@@ -1,7 +1,8 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Network.WireGuard.RPC
-  ( runRPC
+  ( runRPC,
+    serveConduit
   ) where
 
 import           Control.Concurrent.STM              (STM, atomically,
@@ -31,16 +32,20 @@ import           Network.WireGuard.Foreign.UAPI
 import           Network.WireGuard.Internal.Constant
 import           Network.WireGuard.Internal.State
 import           Network.WireGuard.Internal.Types
-import           Network.WireGuard.Internal.Util
+import           Network.WireGuard.Internal.Util     (catchIOExceptionAnd,
+                                                      catchSomeExceptionAnd)
 
+import Debug.Trace
 -- | Run RPC service over a unix socket
 runRPC :: FilePath -> Device -> IO ()
 runRPC sockPath device = runUnixServer (serverSettings sockPath) $ \app ->
-    catchIOExceptionAnd (return ()) $ runConduit (appSource app =$= serveConduit =$= appSink app)
-  where
-    -- TODO: ensure that all bytestring over sockets will be erased
-    serveConduit = do
+    catchIOExceptionAnd (return ()) $ runConduit (appSource app .| serveConduit device .| appSink app)
+    
+-- TODO: ensure that all bytestring over sockets will be erased
+serveConduit :: Device -> ConduitM BS.ByteString BS.ByteString IO ()
+serveConduit device = do
         h <- CB.head
+        traceM $  "Received " ++ show h
         case h of
             Just 0 -> showDevice device
             Just byte -> do
@@ -50,7 +55,7 @@ runRPC sockPath device = runUnixServer (serverSettings sockPath) $ \app ->
                     Just wgdev -> catchSomeExceptionAnd returnError (updateDevice wgdev)
                     Nothing    -> mempty
             Nothing   -> mempty
-
+  where
     returnError = yield $ writeConfig (-invalidValueError)
 
     showDevice Device{..} = do

@@ -1,3 +1,4 @@
+[![Travis Status](https://travis-ci.org/NinjaTrappeur/wireguard-hs.svg?branch=RPC-Refactoring)](https://travis-ci.org/NinjaTrappeur/wireguard-hs)
 ### Do not use this Haskell code.
 
 This is not a complete implementation of WireGuard. If you're interested in using WireGuard, use the implementation for Linux [found here](https://git.zx2c4.com/WireGuard/) and described on the [main wireguard website](https://www.wireguard.io/). There is no group of users that should be using the code in this repository here under any circumstances at the moment, not even beta testers or dare devils. It simply isn't complete. However, if you're interested in assisting with the Haskell development of WireGuard and contributing to this repository, by all means dig in and help out. But users: stay far away, at least for now.

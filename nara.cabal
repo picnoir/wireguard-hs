@@ -19,7 +19,7 @@ flag static
   default:
     False
 
-executable nara-exe
+executable nara
   hs-source-dirs:      app
   main-is:             Main.hs
   ghc-options:
@@ -115,6 +115,10 @@ test-suite nara-test
       base == 4.9.*
     , hspec
     , nara
+    , bytestring
+    , conduit-extra
+    , conduit
+    , stm
   other-modules:
     Network.WireGuard.RPCSpec
   default-language: Haskell2010
