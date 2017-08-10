@@ -5,37 +5,52 @@ module Network.WireGuard.RPC
     serveConduit
   ) where
 
-import           Control.Concurrent.STM              (STM, atomically,
-                                                      modifyTVar', readTVar,
-                                                      writeTVar)
-import           Control.Monad                       (replicateM, sequence,
-                                                      when)
-import           Control.Monad.IO.Class              (liftIO)
-import qualified Crypto.Noise.DH                     as DH
-import qualified Data.ByteArray                      as BA
-import qualified Data.ByteString                     as BS
-import qualified Data.Conduit.Binary                 as CB
-import           Data.Conduit.Network.Unix           (appSink, appSource,
-                                                      runUnixServer,
-                                                      serverSettings)
-import qualified Data.HashMap.Strict                 as HM
-import           Data.Int                            (Int32)
-import           Data.List                           (genericLength)
-import           Foreign.C.Types                     (CTime (..))
+import           Control.Concurrent.STM                    (STM, atomically,
+                                                            modifyTVar', readTVar,
+                                                            writeTVar)
+import           Control.Monad                             (replicateM, sequence,
+                                                            when)
+import           Control.Monad.IO.Class                    (liftIO)
+import qualified Crypto.Noise.DH                     as DH (dhPubToBytes, dhSecToBytes,
+                                                            dhBytesToPair, dhBytesToPair,
+                                                            dhBytesToPub)
+import qualified Data.ByteArray                      as BA (convert)
+import qualified Data.ByteString                     as BS (ByteString, concat,
+                                                            replicate)
+import qualified Data.ByteString.Lazy.Char8          as CL (pack)
+import qualified Data.Conduit.Binary                 as CB (sinkStorable, take)
+import           Data.Conduit.Network.Unix                 (appSink, appSource,
+                                                            runUnixServer,
+                                                            serverSettings)
+import qualified Data.HashMap.Strict                 as HM (size, delete,
+                                                            lookup, insert,
+                                                            empty)
+import           Data.Int                                  (Int32)
+import           Data.List                                 (genericLength)
+import           Foreign.C.Types                           (CTime (..))
 
-import           Data.Bits
-import           Data.Conduit
-import           Data.IP
-import           Data.Maybe
+import           Data.Bits                                 (Bits(..))
+import           Data.Conduit                              (ConduitM, (.|),
+                                                            yield, runConduit)
+import           Data.IP                                   (IPRange(..), addrRangePair,
+                                                            toHostAddress, toHostAddress6,
+                                                            fromHostAddress, makeAddrRange,
+                                                            fromHostAddress6)
+import           Data.Maybe                                (fromMaybe, fromJust, isJust)
 
-import           Network.WireGuard.Foreign.UAPI
-import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.State
-import           Network.WireGuard.Internal.Types
-import           Network.WireGuard.Internal.Util     (catchIOExceptionAnd,
-                                                      catchSomeExceptionAnd)
+import           Network.WireGuard.Foreign.UAPI            (WgPeer(..), WgDevice(..),
+                                                            WgIpmask(..), writeConfig,
+                                                            peerFlagRemoveMe, peerFlagReplaceIpmasks,
+                                                            deviceFlagRemoveFwmark, deviceFlagReplacePeers,
+                                                            deviceFlagRemovePrivateKey, deviceFlagRemovePresharedKey)
+import           Network.WireGuard.Internal.Constant       (keyLength)
+import           Network.WireGuard.Internal.State          (Device(..), Peer(..),
+                                                            buildRouteTables, createPeer,
+                                                            invalidateSessions)
+import           Network.WireGuard.Internal.Types          (PrivateKey, PublicKey,
+                                                            PresharedKey, KeyPair)
+import           Network.WireGuard.Internal.Util           (catchIOExceptionAnd)
 
-import Debug.Trace
 -- | Run RPC service over a unix socket
 runRPC :: FilePath -> Device -> IO ()
 runRPC sockPath device = runUnixServer (serverSettings sockPath) $ \app ->
@@ -44,19 +59,15 @@ runRPC sockPath device = runUnixServer (serverSettings sockPath) $ \app ->
 -- TODO: ensure that all bytestring over sockets will be erased
 serveConduit :: Device -> ConduitM BS.ByteString BS.ByteString IO ()
 serveConduit device = do
-        h <- CB.head
-        traceM $  "Received " ++ show h
-        case h of
-            Just 0 -> showDevice device
-            Just byte -> do
-                leftover (BS.singleton byte)
-                mWgdev <- CB.sinkStorable
-                case mWgdev of
-                    Just wgdev -> catchSomeExceptionAnd returnError (updateDevice wgdev)
-                    Nothing    -> mempty
-            Nothing   -> mempty
+        line <- CB.take 5
+        case () of _
+                    | isGet line  -> showDevice device
+                    | isSet line  -> undefined
+                    | otherwise   -> mempty
   where
-    returnError = yield $ writeConfig (-invalidValueError)
+    --returnError = yield $ writeConfig (-invalidValueError)
+    isGet = (== CL.pack "get=1")
+    isSet = (== CL.pack "set=1")
 
     showDevice Device{..} = do
         (wgdevice, peers') <- liftIO buildWgDevice
@@ -68,10 +79,10 @@ serveConduit device = do
             let (pub, priv) = case localKey' of
                     Nothing          -> (emptyKey, emptyKey)
                     Just (sec, pub') -> (pubToBytes pub', privToBytes sec)
-            psk' <- fmap pskToBytes <$> readTVar presharedKey
+            psk'    <- fmap pskToBytes <$> readTVar presharedKey
             fwmark' <- fromIntegral <$> readTVar fwmark
-            port' <- fromIntegral <$> readTVar port
-            peers' <- readTVar peers
+            port'   <- fromIntegral <$> readTVar port
+            peers'  <- readTVar peers
             return (WgDevice intfName 0 pub priv (fromMaybe emptyKey psk')
                 fwmark' port' (fromIntegral $ HM.size peers'), peers')
 

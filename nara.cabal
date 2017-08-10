@@ -93,7 +93,7 @@ library
     buildable: False
 
   ghc-options:
-    -Wall -Werror -O2 
+    -Wall -O2 
   if flag(static)
     ghc-options:
       -optl-static
