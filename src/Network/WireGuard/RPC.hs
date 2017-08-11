@@ -1,8 +1,13 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Network.WireGuard.RPC
-  ( runRPC,
-    serveConduit
+  ( OpType(..),
+    RpcRequest(..),
+    runRPC,
+    serveConduit,
+    bytesToPair,
+    showDevice,
+    showPeer
   ) where
 
 import           Control.Concurrent.STM                    (STM, atomically,
@@ -16,22 +21,27 @@ import qualified Crypto.Noise.DH                     as DH (dhPubToBytes, dhSecT
                                                             dhBytesToPub)
 import qualified Data.ByteArray                      as BA (convert)
 import qualified Data.ByteString                     as BS (ByteString, concat,
-                                                            replicate)
-import qualified Data.ByteString.Lazy.Char8          as CL (pack)
-import qualified Data.Conduit.Binary                 as CB (sinkStorable, take)
+                                                            replicate, empty, pack)
+import qualified Data.ByteString.Lazy.Char8          as CL (unpack)
+import qualified Data.ByteString.Char8               as BC (pack, singleton, map)
+import           Data.Char                                 (toLower)
+import qualified Data.Conduit.Binary                 as CB (sinkStorable, sinkLbs)
 import           Data.Conduit.Network.Unix                 (appSink, appSource,
                                                             runUnixServer,
                                                             serverSettings)
-import qualified Data.HashMap.Strict                 as HM (size, delete,
+import qualified Data.HashMap.Strict                 as HM (HashMap(..), size, delete,
                                                             lookup, insert,
-                                                            empty)
+                                                            empty, fromList,
+                                                            foldrWithKey, elems)
+import           Data.Hex                                  (hex)
 import           Data.Int                                  (Int32)
-import           Data.List                                 (genericLength)
+import           Data.List                                 (foldl', genericLength)
 import           Foreign.C.Types                           (CTime (..))
 
 import           Data.Bits                                 (Bits(..))
 import           Data.Conduit                              (ConduitM, (.|),
-                                                            yield, runConduit)
+                                                            yield, runConduit,
+                                                            toConsumer)
 import           Data.IP                                   (IPRange(..), addrRangePair,
                                                             toHostAddress, toHostAddress6,
                                                             fromHostAddress, makeAddrRange,
@@ -51,74 +61,84 @@ import           Network.WireGuard.Internal.Types          (PrivateKey, PublicKe
                                                             PresharedKey, KeyPair)
 import           Network.WireGuard.Internal.Util           (catchIOExceptionAnd)
 
+-- | Kind of client operation. 
+--
+--  See <https://www.wireguard.com/xplatform/#configuration-protocol> for more informations.
+data OpType = Get | Set
+
+-- | Request wrapper. The payload is set only for Set operations. 
+--
+--  See <https://www.wireguard.com/xplatform/#configuration-protocol> for more informations.
+data RpcRequest = RpcRequest {
+  opType  ::  OpType,
+  payload ::  BS.ByteString
+}
+
 -- | Run RPC service over a unix socket
 runRPC :: FilePath -> Device -> IO ()
 runRPC sockPath device = runUnixServer (serverSettings sockPath) $ \app ->
-    catchIOExceptionAnd (return ()) $ runConduit (appSource app .| serveConduit device .| appSink app)
+    catchIOExceptionAnd (return ()) $ 
+      runConduit (appSource app .| serveConduit device .| appSink app)
     
 -- TODO: ensure that all bytestring over sockets will be erased
 serveConduit :: Device -> ConduitM BS.ByteString BS.ByteString IO ()
 serveConduit device = do
-        line <- CB.take 5
-        case () of _
-                    | isGet line  -> showDevice device
-                    | isSet line  -> undefined
-                    | otherwise   -> mempty
+        request <- CL.unpack <$> toConsumer CB.sinkLbs 
+        if request /= "" 
+          then routeRequest request
+          else yield mempty
   where
     --returnError = yield $ writeConfig (-invalidValueError)
-    isGet = (== CL.pack "get=1")
-    isSet = (== CL.pack "set=1")
+    isGet = (== "get=1")
+    isSet = (== "set=1")
+    routeRequest req = do
+        let line = head $ lines req
+        case () of _
+                    | isGet line  -> do 
+                        deviceBstr <- liftIO . atomically $ showDevice device
+                        yield deviceBstr                    
+                    | otherwise   -> yield mempty
 
-    showDevice Device{..} = do
-        (wgdevice, peers') <- liftIO buildWgDevice
-        yield (writeConfig wgdevice)
-        mapM_ showPeer peers'
-      where
-        buildWgDevice = atomically $ do
-            localKey' <- readTVar localKey
-            let (pub, priv) = case localKey' of
-                    Nothing          -> (emptyKey, emptyKey)
-                    Just (sec, pub') -> (pubToBytes pub', privToBytes sec)
-            psk'    <- fmap pskToBytes <$> readTVar presharedKey
-            fwmark' <- fromIntegral <$> readTVar fwmark
-            port'   <- fromIntegral <$> readTVar port
-            peers'  <- readTVar peers
-            return (WgDevice intfName 0 pub priv (fromMaybe emptyKey psk')
-                fwmark' port' (fromIntegral $ HM.size peers'), peers')
+showDevice :: Device -> STM BS.ByteString
+showDevice device@Device{..} = do
+  listen_port   <- BC.pack . show <$> readTVar port
+  fwmark        <- BC.pack . show <$> readTVar fwmark
+  private_key   <- fmap (toLowerBs . hex . privToBytes . fst) <$> readTVar localKey
+  let devHm     = [("private_key", private_key),
+                   ("listen_port", Just listen_port),
+                   ("fwmark", Just fwmark)]
+  let devBs     = serializeRpcKeyValue devHm
+  peers         <- readTVar peers 
+  peersBstrList <-  mapM showPeer $ HM.elems peers
+  return . BS.concat $ (devBs : peersBstrList ++ [BC.singleton '\n'])
 
-    showPeer Peer{..} = do
-        (wgpeer, ipmasks') <- liftIO buildWgPeer
-        yield (writeConfig wgpeer)
-        yield $ BS.concat (map (writeConfig . ipRangeToWgIpmask) ipmasks')
-      where
-        extractTime Nothing          = 0
-        extractTime (Just (CTime t)) = fromIntegral t
+showPeer :: Peer -> STM BS.ByteString
+showPeer Peer{..} = do
+  let hm                        =  HM.empty
+  let public_key                =  toLowerBs . hex $ pubToBytes remotePub
+  endpoint                      <- readTVar endPoint
+  persistant_keepalive_interval <- readTVar keepaliveInterval
+  allowed_ip                    <- readTVar ipmasks
+  rx_bytes                      <- readTVar receivedBytes
+  tx_bytes                      <- readTVar transferredBytes
+  last_handshake_time           <- readTVar lastHandshakeTime
+  let peer = [("public_key", Just public_key),
+              ("endpoint", BC.pack . show <$> endpoint),
+              ("persistant_keepalive_interval", Just . BC.pack . show $ persistant_keepalive_interval),
+              ("rx_bytes", Just . BC.pack . show $ rx_bytes),
+              ("tx_bytes", Just . BC.pack . show $ tx_bytes),
+              ("last_handshake_time", BC.pack . show <$> last_handshake_time)
+              ] ++ expandAllowedIps (Just . BC.pack . show <$> allowed_ip)
+  return $ serializeRpcKeyValue peer
+  where
+    expandAllowedIps = foldr (\val acc -> ("allowed_ip", val):acc) []
 
-        buildWgPeer = atomically $ do
-            ipmasks' <- readTVar ipmasks
-            wgpeer <- WgPeer (pubToBytes remotePub)
-                          <$> return 0
-                          <*> readTVar endPoint
-                          <*> (extractTime <$> readTVar lastHandshakeTime)
-                          <*> (fromIntegral <$> readTVar receivedBytes)
-                          <*> (fromIntegral <$> readTVar transferredBytes)
-                          <*> (fromIntegral <$> readTVar keepaliveInterval)
-                          <*> return (genericLength ipmasks')
-            return (wgpeer, ipmasks')
+serializeRpcKeyValue :: [(String, Maybe BS.ByteString)] -> BS.ByteString
+serializeRpcKeyValue = foldl' showKeyValueLine BS.empty
+  where
+    showKeyValueLine acc (key, Just val) = BS.concat [acc, BC.pack key, BC.singleton '=', val, BC.singleton '\n']
+    showKeyValueLine acc (_, Nothing)    = acc
 
-    updateDevice wgdevice = do
-        setPeerMs <- replicateM (fromIntegral $ deviceNumPeers wgdevice) $ do
-            Just wgpeer <- CB.sinkStorable
-            -- TODO: replace fromJust
-            ipranges <- replicateM (fromIntegral $ peerNumIpmasks wgpeer)
-                (wgIpmaskToIpRange . fromJust <$> CB.sinkStorable)
-            return $ setPeer device wgpeer ipranges
-        liftIO $ atomically $ do
-            setDevice device wgdevice
-            anyIpMaskChanged <- or <$> sequence setPeerMs
-            -- TODO: modify routetable incrementally
-            when anyIpMaskChanged $ buildRouteTables device
-        yield $ writeConfig (0 :: Int32)
 
 -- | implementation of config.c::set_peer()
 setPeer :: Device -> WgPeer -> [IPRange] -> STM Bool
@@ -201,3 +221,6 @@ bytesToPub = DH.dhBytesToPub . BA.convert
 
 bytesToPSK :: BS.ByteString -> PresharedKey
 bytesToPSK = BA.convert
+
+toLowerBs :: BS.ByteString -> BS.ByteString
+toLowerBs = BC.map toLower 

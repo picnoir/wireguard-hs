@@ -71,6 +71,7 @@ library
     directory,
     exceptions,
     filepath,
+    hex,
     iproute == 1.7.*,
     lens,
     memory == 0.14.*,
@@ -119,6 +120,11 @@ test-suite nara-test
     , conduit-extra
     , conduit
     , stm
+    , memory
+    , cacophony
+    , hex
+    , network
+    , iproute
   other-modules:
     Network.WireGuard.RPCSpec
   default-language: Haskell2010
