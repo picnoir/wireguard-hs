@@ -1,4 +1,4 @@
-module Network.WireGuard.Internal.Types
+module Network.WireGuard.Internal.Data.Types
   ( Index
   , Counter
   , PeerId

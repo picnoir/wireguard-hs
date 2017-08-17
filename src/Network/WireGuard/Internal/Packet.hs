@@ -13,7 +13,7 @@ import           Foreign.Storable                    (sizeOf)
 import           Data.Serialize
 
 import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.Types
+import           Network.WireGuard.Internal.Data.Types
 
 data Packet = HandshakeInitiation
               { senderIndex      :: !Index

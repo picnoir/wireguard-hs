@@ -14,7 +14,7 @@ import           System.Posix.Types                     (Fd)
 import           Network.WireGuard.Foreign.Tun
 import           Network.WireGuard.Internal.Constant
 import           Network.WireGuard.Internal.PacketQueue
-import           Network.WireGuard.Internal.Types
+import           Network.WireGuard.Internal.Data.Types
 import           Network.WireGuard.Internal.Util
 
 runTunListener :: [Fd] -> PacketQueue (Time, TunPacket) -> PacketQueue TunPacket -> IO ()

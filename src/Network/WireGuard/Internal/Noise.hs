@@ -31,7 +31,7 @@ import           Data.Serialize                     (putWord64le, runPut)
 
 import           Crypto.Noise
 
-import           Network.WireGuard.Internal.Types
+import           Network.WireGuard.Internal.Data.Types
 
 type NoiseStateWG = NoiseState ChaChaPoly1305 Curve25519 BLAKE2s
 

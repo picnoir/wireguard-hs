@@ -41,7 +41,7 @@ import           Network.WireGuard.Internal.Noise
 import           Network.WireGuard.Internal.Packet
 import           Network.WireGuard.Internal.PacketQueue
 import           Network.WireGuard.Internal.State
-import           Network.WireGuard.Internal.Types
+import           Network.WireGuard.Internal.Data.Types
 import           Network.WireGuard.Internal.Util
 
 runCore :: Device

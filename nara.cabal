@@ -56,13 +56,17 @@ library
     Network.WireGuard.Internal.Noise,
     Network.WireGuard.Internal.Packet,
     Network.WireGuard.Internal.PacketQueue,
+    Network.WireGuard.Internal.RpcParsers,
     Network.WireGuard.Internal.State,
-    Network.WireGuard.Internal.Types
+    Network.WireGuard.Internal.Data.Types,
+    Network.WireGuard.Internal.Data.RpcTypes
   build-depends:
     async,
+    attoparsec,
     base == 4.9.*,
     blake2,
     bytestring,
+    bytestring-conversion,
     cacophony >=0.9.2 && <0.10,
     cereal,
     conduit,
@@ -83,6 +87,7 @@ library
     transformers,
     unix == 2.7.*,
     unordered-containers
+
 
   if os(linux)
     c-sources: cbits/tun-linux.c
@@ -113,7 +118,8 @@ test-suite nara-test
       tests/spec
   ghc-options: -Wall
   build-depends:
-      base == 4.9.*
+      attoparsec
+    , base == 4.9.*
     , hspec
     , nara
     , bytestring
@@ -125,6 +131,7 @@ test-suite nara-test
     , hex
     , network
     , iproute
+    , unordered-containers
   other-modules:
     Network.WireGuard.RPCSpec
   default-language: Haskell2010

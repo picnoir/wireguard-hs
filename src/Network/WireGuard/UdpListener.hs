@@ -19,7 +19,7 @@ import           Network.WireGuard.Internal.State       (Device (..))
 
 import           Network.WireGuard.Internal.Constant
 import           Network.WireGuard.Internal.PacketQueue
-import           Network.WireGuard.Internal.Types
+import           Network.WireGuard.Internal.Data.Types
 import           Network.WireGuard.Internal.Util
 
 runUdpListener :: Device -> PacketQueue UdpPacket -> PacketQueue UdpPacket -> IO ()

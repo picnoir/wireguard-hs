@@ -42,7 +42,7 @@ import           Network.Socket.Internal             (SockAddr)
 import           Control.Concurrent.STM
 
 import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.Types
+import           Network.WireGuard.Internal.Data.Types
 
 data Device = Device
             { intfName     :: String
