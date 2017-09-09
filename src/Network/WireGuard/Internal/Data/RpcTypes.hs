@@ -3,16 +3,17 @@ module Network.WireGuard.Internal.Data.RpcTypes(
  RpcRequest(..),
  RpcSetPayload(..),
  RpcDevicePayload(..),
- RpcPeerPayload(..)
+ RpcPeerPayload(..),
+ RpcDeviceField(..),
+ RpcPeerField(..)
 ) where
 
-import Data.Word                                (Word64)
 import Data.IP                                  (IPRange(..))
-import           Crypto.Noise.DH                (dhSecToBytes)
+import Crypto.Noise.DH                          (dhSecToBytes, dhPubToBytes)
 import Network.Socket.Internal                  (SockAddr)
 
 import Network.WireGuard.Internal.Data.Types    (PublicKey, KeyPair,
-                                                 Time)
+                                                 PresharedKey)
 -- | Kind of client operation. 
 --
 --  See <https://www.wireguard.com/xplatform/#configuration-protocol> for more informations.
@@ -22,22 +23,22 @@ data OpType = Get | Set
 --
 --  See <https://www.wireguard.com/xplatform/#configuration-protocol> for more informations.
 data RpcRequest = RpcRequest {
-  opType  ::  OpType,
-  payload ::  Maybe RpcSetPayload
+  opType  ::  !OpType,
+  payload ::  !(Maybe RpcSetPayload)
 }
 
 -- | Payload sent together with a set RPC operation.
 data RpcSetPayload = RpcSetPayload {
-  devicePayload :: RpcDevicePayload,
+  devicePayload :: !RpcDevicePayload,
   peersPayload  :: [RpcPeerPayload]
 }
 
 -- | Device related payload sent together with a set RPC operation.
 data RpcDevicePayload = RpcDevicePayload {
-  pk           :: Maybe KeyPair,
-  listenPort   :: Int,
-  fwMark       :: Maybe Word,
-  replacePeers :: Bool
+  pk           :: !(Maybe KeyPair),
+  listenPort   :: !Int,
+  fwMark       :: !(Maybe Word),
+  replacePeers :: !Bool
 } 
 
 instance Show RpcDevicePayload where
@@ -50,14 +51,35 @@ instance Eq RpcDevicePayload where
       ((dhSecToBytes . fst) <$> pk1) == ((dhSecToBytes . fst) <$> pk2) && (prt1 == prt2) &&
       (rp1 == rp2) && (fw1 == fw2)
 
+data RpcDeviceField = RpcPk !(Maybe KeyPair)
+                    | RpcPort !Int
+                    | RpcFwMark !(Maybe Word)
+                    | RpcReplacePeers 
+
 -- | Peer related payload sent together with a set RPC operation.
 data RpcPeerPayload  = RpcPeerPayload {
-  pubK                        :: PublicKey,
-  remove                      :: Bool,
-  endpoint                    :: SockAddr,
-  persistantKeepaliveInterval :: Int,
-  allowedIp                   :: [IPRange],
-  rxBytes                     :: Word64,
-  txBytes                     :: Word64,
-  lastHandshake               :: Time 
+  pubK                        :: !PublicKey,
+  remove                      :: !Bool,
+  presharedKey                :: !(Maybe PresharedKey),
+  endpoint                    :: !SockAddr,
+  persistantKeepaliveInterval :: !Int,
+  replaceIps                  :: !Bool,
+  allowedIp                   :: ![IPRange]
 }
+
+instance Eq RpcPeerPayload where
+    (==) (RpcPeerPayload pub1 rm1 psk1 e1 k1 rp1 aip1)(RpcPeerPayload pub2 rm2 psk2 e2 k2 rp2 aip2) =
+         (dhPubToBytes pub1 == dhPubToBytes pub2) && (rm1 == rm2) && (psk1 == psk2) && (e1 == e2) &&
+         (k1 == k2) && (rp1 == rp2) && (aip1 == aip2)
+
+instance Show RpcPeerPayload where
+  show (RpcPeerPayload pub1 rm1 psk1 e1 k1 rp1 aip1) 
+    = show (dhPubToBytes pub1) ++ show rm1 ++ show psk1 ++ show e1 ++ show k1 ++ 
+      show rp1 ++ show aip1
+
+data RpcPeerField = RpcRmFlag    !Bool
+                  | RpcPsh       !PresharedKey
+                  | RpcEndp      !SockAddr
+                  | RpcKA        !Int
+                  | RpcDelIps    !Bool
+                  | RpcAllIp     !IPRange

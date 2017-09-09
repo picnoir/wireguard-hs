@@ -1,9 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Network.WireGuard.RPC
-  ( OpType(..),
-    RpcRequest(..),
-    runRPC,
+  ( runRPC,
     serveConduit,
     bytesToPair,
     showDevice,
@@ -47,13 +45,14 @@ import           Network.WireGuard.Foreign.UAPI            (WgPeer(..), WgDevice
                                                             deviceFlagRemoveFwmark, deviceFlagReplacePeers,
                                                             deviceFlagRemovePrivateKey, deviceFlagRemovePresharedKey)
 import           Network.WireGuard.Internal.Constant       (keyLength)
-import           Network.WireGuard.Internal.RpcParsers     (RpcRequest(..), RpcSetPayload(..), 
-                                                            OpType(..), requestParser)
+import           Network.WireGuard.Internal.RpcParsers     (requestParser)
 import           Network.WireGuard.Internal.State          (Device(..), Peer(..),
                                                             createPeer,
                                                             invalidateSessions)
 import           Network.WireGuard.Internal.Data.Types     (PrivateKey, PublicKey,
                                                             PresharedKey, KeyPair)
+import           Network.WireGuard.Internal.Data.RpcTypes  (RpcRequest(..), RpcSetPayload(..),
+                                                            OpType(..))
 import           Network.WireGuard.Internal.Util           (catchIOExceptionAnd)
 
 -- | Run RPC service over a unix socket

@@ -2,17 +2,18 @@ module Network.WireGuard.RPCSpec (spec) where
 
 import Control.Monad.STM                           (atomically, STM)
 import Control.Concurrent.STM.TVar                 (writeTVar)
-import           Data.Attoparsec.ByteString.Char8  (parse, eitherResult)
+import           Data.Attoparsec.ByteString.Char8  (parse, eitherResult, feed)
 import qualified Data.ByteArray             as BA  (convert)
 import qualified Data.ByteString            as BS  (ByteString)
 import qualified Data.ByteString.Lazy       as BSL (ByteString, isSuffixOf)
-import qualified Data.ByteString.Char8      as BC  (pack)
+import qualified Data.ByteString.Char8      as BC  (pack, empty)
 import qualified Data.ByteString.Lazy.Char8 as BCL (pack)
+import           Data.Either                       (isLeft)
 import           Data.Maybe                        (fromJust)
 import           Data.HashMap.Strict        as HM  (fromList)
 import           Data.Hex                          (unhex)
 import           Data.IP                           (AddrRange, IPv4, 
-                                                    IPRange(..),
+                                                    IPv6, IPRange(..),
                                                     toHostAddress6)
 import qualified Crypto.Noise.DH            as DH  (dhBytesToPair, dhBytesToPub)
 import Data.Conduit                                (runConduit, yield, ( .|))
@@ -21,11 +22,13 @@ import Network.Socket                              (SockAddr(..), tupleToHostAdd
 import Test.Hspec                                  (Spec, describe,
                                                     it, shouldBe,
                                                     shouldSatisfy)
-import Network.WireGuard.RPC                       (serveConduit, showPeer)
-import Network.WireGuard.Internal.RpcParsers       (RpcDevicePayload(..), deviceParser)            
-import Network.WireGuard.Internal.State            (Device(..), Peer(..),
-                                                    createDevice, createPeer)
-import Network.WireGuard.Internal.Data.Types       (PresharedKey, PeerId)
+
+import Network.WireGuard.RPC                                     (serveConduit, showPeer)
+import Network.WireGuard.Internal.RpcParsers                     (deviceParser, peerParser)            
+import Network.WireGuard.Internal.State                          (Device(..), Peer(..),
+                                                                  createDevice, createPeer)
+import Network.WireGuard.Internal.Data.Types                     (PresharedKey, PeerId)
+import qualified Network.WireGuard.Internal.Data.RpcTypes as RPC (RpcDevicePayload(..), RpcPeerPayload(..))
 
 spec :: Spec
 spec = do
@@ -73,25 +76,71 @@ spec = do
         it "must parse a add device entry" $ do
           pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
           let pk = DH.dhBytesToPair $ BA.convert pkHex
-          let expectedDevice = RpcDevicePayload pk 777 (Just 0) False
-          let result = parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=0\n"
+          let expectedDevice = RPC.RpcDevicePayload pk 777 (Just 0) False
+          let result = feed (parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=0\n") BC.empty
           eitherResult result `shouldBe` Right expectedDevice
         it "must parse a remove pk device entry" $ do
-          let expectedDevice = RpcDevicePayload Nothing 777 (Just 0) False
-          let result = parse deviceParser $ BC.pack "private_key=\nlisten_port=777\nfwmark=0\n"
+          let expectedDevice = RPC.RpcDevicePayload Nothing 777 (Just 0) False
+          let result = feed (parse deviceParser $ BC.pack "private_key=\nlisten_port=777\nfwmark=0\n") BC.empty
           eitherResult result `shouldBe` Right expectedDevice
         it "must parse a remove fwmark device entry" $ do
           pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
           let pk = DH.dhBytesToPair $ BA.convert pkHex
-          let expectedDevice = RpcDevicePayload pk 777 Nothing False
-          let result = parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=\n"
+          let expectedDevice = RPC.RpcDevicePayload pk 777 Nothing False
+          let result = feed (parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=\n") BC.empty
           eitherResult result `shouldBe` Right expectedDevice
         it "must handle remove device flag" $ do
           pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
           let pk = DH.dhBytesToPair $ BA.convert pkHex
-          let expectedDevice = RpcDevicePayload pk 777 Nothing True
-          let result = parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=\nreplace_peers=true\n"
+          let expectedDevice = RPC.RpcDevicePayload pk 777 Nothing True
+          let result = feed (parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=\nreplace_peers=true\n") BC.empty
           eitherResult result `shouldBe` Right expectedDevice
+        it "must not be position sensitive" $ do
+          pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let pk = DH.dhBytesToPair $ BA.convert pkHex
+          let expectedDevice = RPC.RpcDevicePayload pk 777 Nothing True
+          let result = feed (parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nfwmark=\nreplace_peers=true\nlisten_port=777\n") BC.empty
+          eitherResult result `shouldBe` Right expectedDevice
+      describe "peerParser" $ do
+        it "must parse a standart add peer entry" $ do
+          pubHex           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          let pubK          = fromJust . DH.dhBytesToPub $ BA.convert pubHex
+          let expectedPeer  = RPC.RpcPeerPayload pubK False Nothing (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let result = feed (parse peerParser $ BC.pack "public_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPeer
+        it "must parse a remove peer entry" $ do
+          pubHex           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          let pubK          = fromJust . DH.dhBytesToPub $ BA.convert pubHex
+          let expectedPeer  = RPC.RpcPeerPayload pubK True Nothing (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let result = feed (parse peerParser $ BC.pack "public_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nremove=true\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPeer
+        it "must parse a peer entry containing a preshared key" $ do
+          pubHex           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          pshHex           <- unhex $ BC.pack "188515093e952f5f22e865cef3012e72f8b5f0b598ac0309d5dacce3b70fcf52"
+          let pubK          = fromJust . DH.dhBytesToPub $ BA.convert pubHex
+          let pshK          = Just $ BA.convert pshHex :: Maybe PresharedKey
+          let expectedPeer  = RPC.RpcPeerPayload pubK False pshK (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let result = feed (parse peerParser $ BC.pack "public_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\npreshared_key=188515093e952f5f22e865cef3012e72f8b5f0b598ac0309d5dacce3b70fcf52\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPeer
+        it "must parse a peer having an ipv6 endpoint" $ do
+          pubHex           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          let pubK          = fromJust . DH.dhBytesToPub $ BA.convert pubHex
+          let ipv6          = SockAddrInet6 51820 0 (toHostAddress6 $ read "abcd:23::33") 2
+          let expectedPeer  = RPC.RpcPeerPayload pubK False Nothing ipv6 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let result = feed (parse peerParser $ BC.pack "public_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.1.0/24\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPeer
+        it "must parse a peer having several allowed ips " $ do
+          pubHex           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          let pubK          = fromJust . DH.dhBytesToPub $ BA.convert pubHex
+          let expectedPeer  = RPC.RpcPeerPayload pubK False Nothing (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4),IPv6Range (read "2001:7f8::/29" :: AddrRange IPv6)]
+          let result = feed (parse peerParser $ BC.pack "public_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\nallowed_ip=[2001:7f8::/29]\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPeer
+        it "must not parse a peer having an incorrect public key" $ do
+          let result = feed (parse peerParser $ BC.pack "public_key=2e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\n") BC.empty
+          eitherResult result `shouldSatisfy` isLeft 
+        it "must not parse a peer having an incorrect allowed ip" $ do
+          let result = feed (parse peerParser $ BC.pack "public_key=2e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0.2/24\n") BC.empty
+          eitherResult result `shouldSatisfy` isLeft 
         where
           testDevice = do
             pkH <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a" 
