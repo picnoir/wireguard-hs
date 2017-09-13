@@ -38,15 +38,15 @@ import Network.WireGuard.Internal.Data.RpcTypes (OpType(..),
 requestParser :: Parser RpcRequest 
 requestParser = do
   op <- requestTypeParser
-  let p = case op of
-                  Set -> undefined
-                  Get -> Nothing
-  _ <- string $ BC.pack "\n\n"
+  p  <- case op of
+          Set -> Just <$> setPayloadParser
+          Get -> return Nothing
+  _ <- string $ BC.pack "\n"
   return $ RpcRequest op p
 
 requestTypeParser :: Parser OpType
-requestTypeParser = "get=1" *> return Get
-                <|> "set=1" *> return Set
+requestTypeParser = "get=1\n" *> return Get 
+                <|> "set=1\n" *> return Set
 
 setPayloadParser :: Parser RpcSetPayload
 setPayloadParser = do

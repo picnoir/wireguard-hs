@@ -17,7 +17,7 @@ import Network.WireGuard.Internal.Data.Types    (PublicKey, KeyPair,
 -- | Kind of client operation. 
 --
 --  See <https://www.wireguard.com/xplatform/#configuration-protocol> for more informations.
-data OpType = Get | Set
+data OpType = Get | Set deriving (Eq, Show)
 
 -- | Request wrapper. The payload is set only for Set operations. 
 --
@@ -25,7 +25,7 @@ data OpType = Get | Set
 data RpcRequest = RpcRequest {
   opType  ::  !OpType,
   payload ::  !(Maybe RpcSetPayload)
-}
+} deriving (Eq, Show)
 
 -- | Payload sent together with a set RPC operation.
 data RpcSetPayload = RpcSetPayload {

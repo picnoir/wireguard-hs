@@ -25,12 +25,13 @@ import Test.Hspec                                  (Spec, describe,
 
 import Network.WireGuard.RPC                                     (serveConduit, showPeer)
 import Network.WireGuard.Internal.RpcParsers                     (deviceParser, peerParser,
-                                                                  setPayloadParser)            
+                                                                  setPayloadParser, requestParser)
 import Network.WireGuard.Internal.State                          (Device(..), Peer(..),
                                                                   createDevice, createPeer)
 import Network.WireGuard.Internal.Data.Types                     (PresharedKey, PeerId)
 import qualified Network.WireGuard.Internal.Data.RpcTypes as RPC (RpcDevicePayload(..), RpcPeerPayload(..),
-                                                                  RpcSetPayload(..))
+                                                                  RpcSetPayload(..), RpcRequest(..),
+                                                                  OpType(..))
 
 spec :: Spec
 spec = do
@@ -174,6 +175,21 @@ spec = do
           let expectedPayload = RPC.RpcSetPayload expectedDevice []
           let result = feed (parse setPayloadParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=0\n") BC.empty
           eitherResult result `shouldBe` Right expectedPayload
+      describe "requestParser" $ do
+        it "must correctly parse a set operation" $ do
+          pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let pk = DH.dhBytesToPair $ BA.convert pkHex
+          pubHex           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          let pubK          = fromJust . DH.dhBytesToPub $ BA.convert pubHex
+          let expectedDevice = RPC.RpcDevicePayload pk 777 (Just 0) False
+          let expectedPeer  = RPC.RpcPeerPayload pubK False Nothing (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let expectedResult = RPC.RpcRequest RPC.Set . Just $ RPC.RpcSetPayload expectedDevice [expectedPeer]
+          let result = feed (parse requestParser $ BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=0\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\n\n") BC.empty
+          eitherResult result `shouldBe` Right expectedResult
+        it "must correctly parse a get operation" $ do
+          let expectedResult = RPC.RpcRequest RPC.Get Nothing
+          let result = feed (parse requestParser $ BC.pack "get=1\n\n") BC.empty
+          eitherResult result `shouldBe` Right expectedResult
         where
           testDevice = do
             pkH <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a" 
