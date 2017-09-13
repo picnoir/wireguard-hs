@@ -31,7 +31,7 @@ data RpcRequest = RpcRequest {
 data RpcSetPayload = RpcSetPayload {
   devicePayload :: !RpcDevicePayload,
   peersPayload  :: [RpcPeerPayload]
-}
+} deriving (Eq, Show)
 
 -- | Device related payload sent together with a set RPC operation.
 data RpcDevicePayload = RpcDevicePayload {

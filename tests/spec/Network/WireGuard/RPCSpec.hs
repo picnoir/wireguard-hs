@@ -24,11 +24,13 @@ import Test.Hspec                                  (Spec, describe,
                                                     shouldSatisfy)
 
 import Network.WireGuard.RPC                                     (serveConduit, showPeer)
-import Network.WireGuard.Internal.RpcParsers                     (deviceParser, peerParser)            
+import Network.WireGuard.Internal.RpcParsers                     (deviceParser, peerParser,
+                                                                  setPayloadParser)            
 import Network.WireGuard.Internal.State                          (Device(..), Peer(..),
                                                                   createDevice, createPeer)
 import Network.WireGuard.Internal.Data.Types                     (PresharedKey, PeerId)
-import qualified Network.WireGuard.Internal.Data.RpcTypes as RPC (RpcDevicePayload(..), RpcPeerPayload(..))
+import qualified Network.WireGuard.Internal.Data.RpcTypes as RPC (RpcDevicePayload(..), RpcPeerPayload(..),
+                                                                  RpcSetPayload(..))
 
 spec :: Spec
 spec = do
@@ -141,6 +143,37 @@ spec = do
         it "must not parse a peer having an incorrect allowed ip" $ do
           let result = feed (parse peerParser $ BC.pack "public_key=2e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0.2/24\n") BC.empty
           eitherResult result `shouldSatisfy` isLeft 
+      describe "setPayloadParser" $ do
+        it "must parse a standard set payload" $ do
+          pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let pk = DH.dhBytesToPair $ BA.convert pkHex
+          pubHex           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          let pubK          = fromJust . DH.dhBytesToPub $ BA.convert pubHex
+          let expectedDevice = RPC.RpcDevicePayload pk 777 (Just 0) False
+          let expectedPeer  = RPC.RpcPeerPayload pubK False Nothing (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let expectedPayload = RPC.RpcSetPayload expectedDevice [expectedPeer]
+          let result = feed (parse setPayloadParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=0\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPayload
+        it "must parse a set payload containing several peers" $ do
+          pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let pk = DH.dhBytesToPair $ BA.convert pkHex
+          pubHex1           <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
+          let pubK1          = fromJust . DH.dhBytesToPub $ BA.convert pubHex1
+          pubHex2           <- unhex $ BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33"
+          let pubK2          = fromJust . DH.dhBytesToPub $ BA.convert pubHex2
+          let expectedDevice = RPC.RpcDevicePayload pk 777 (Just 0) False
+          let expectedPeer1  = RPC.RpcPeerPayload pubK1 False Nothing (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let expectedPeer2  = RPC.RpcPeerPayload pubK2 False Nothing (SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)) 0 False [IPv4Range (read "192.168.1.0/24" :: AddrRange IPv4)]
+          let expectedPayload = RPC.RpcSetPayload expectedDevice [expectedPeer1, expectedPeer2]
+          let result = feed (parse setPayloadParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=0\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nendpoint=192.168.1.1:1337\nallowed_ip=192.168.1.0/24\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPayload
+        it "must parse a set payload containing no peers" $ do
+          pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let pk = DH.dhBytesToPair $ BA.convert pkHex
+          let expectedDevice = RPC.RpcDevicePayload pk 777 (Just 0) False
+          let expectedPayload = RPC.RpcSetPayload expectedDevice []
+          let result = feed (parse setPayloadParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=0\n") BC.empty
+          eitherResult result `shouldBe` Right expectedPayload
         where
           testDevice = do
             pkH <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a" 

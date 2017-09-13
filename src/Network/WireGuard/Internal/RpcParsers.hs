@@ -3,7 +3,8 @@
 module Network.WireGuard.Internal.RpcParsers(
   requestParser,
   deviceParser,
-  peerParser
+  peerParser,
+  setPayloadParser
 ) where
 import           Control.Applicative                       ((*>), (<|>))
 import           Control.Monad                             (join)
@@ -48,7 +49,10 @@ requestTypeParser = "get=1" *> return Get
                 <|> "set=1" *> return Set
 
 setPayloadParser :: Parser RpcSetPayload
-setPayloadParser = undefined
+setPayloadParser = do
+  dev <- deviceParser
+  peers <- many' peerParser
+  return $ RpcSetPayload dev peers
 
 deviceParser :: Parser RpcDevicePayload 
 deviceParser = do
