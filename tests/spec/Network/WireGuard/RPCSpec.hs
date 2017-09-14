@@ -59,11 +59,54 @@ spec = do
           peer1 <- atomically $ getPeer1 pubKey1
           peer2 <- atomically $ getPeer2 pubKey2
           peer3 <- atomically $ getPeer3 pubKey3
-          devStm <- testDeviceWithPeers [(BC.pack "peer1", peer1), (BC.pack "peer2", peer2), (BC.pack "peer3", peer3)]
+          let devStm = testDeviceWithPeers [(BC.pack "peer1", peer1), (BC.pack "peer2", peer2), (BC.pack "peer3", peer3)]
           device <- atomically $ devStm
           res <- runConduit (yield (BC.pack "get=1\n\n") .| serveConduit device .| sinkLbs)
           res `shouldBe` bsTestDeviceWithPairs
           chkCorrectEnd res
+        it "must respond to a correctly formed set device v1 request" $ do
+          pk <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let devStm = getSetTestDevice pk 777 1
+          device <- atomically devStm
+          err <- runConduit (yield (BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=1\n\n") .| serveConduit device .| sinkLbs)
+          err `shouldBe` BCL.pack "errno=0\n\n"
+          dev <- runConduit (yield (BC.pack "get=1\n\n") .| serveConduit device .| sinkLbs)
+          dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=1\nerrno=0\n\n"
+        it "must repond to a correctly formed set device's peers V1 request" $ do
+          pk <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let devStm = getSetTestDevice pk 777 1
+          dev <- atomically devStm 
+          err <- runConduit (yield (BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.4.4/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.4.6/32\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\n\n") .| serveConduit dev .| sinkLbs)
+          err `shouldBe` BCL.pack "errno=0\n\n"
+          dev <- runConduit (yield (BC.pack "get=1\n\n") .| serveConduit dev .| sinkLbs)
+          dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\nfwmark=1\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.4.4/32\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.4.6/32\nerrno=0\n\n"
+        it "must repond to a correctly formed set device's peers V1 request with one peer remove instruction" $ do
+          pk <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          let devStm = getSetTestDevice pk 777 1
+          dev <- atomically devStm 
+          pubKey1 <- unhex $ BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33"
+          pubKey2 <- unhex $ BC.pack "58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376"
+          pubKey3 <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58"
+          peer1 <- atomically $ getPeer1 pubKey1
+          peer2 <- atomically $ getPeer2 pubKey2
+          peer3 <- atomically $ getPeer3 pubKey3
+          err <- runConduit (yield (BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nremove=true\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.4.4/32\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.4.6/32\n\n") .| serveConduit dev .| sinkLbs)
+          err `shouldBe` BCL.pack "errno=0\n\n"
+          dev <- runConduit (yield (BC.pack "get=1\n\n") .| serveConduit dev .| sinkLbs)
+          dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\nfwmark=1\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.4.6/32\nerrno=0\n\n"
+        it "must repond to a correctly formed delete device's peers set V1 request" $ do
+          pubKey1 <- unhex $ BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33"
+          pubKey2 <- unhex $ BC.pack "58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376"
+          pubKey3 <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58"
+          peer1 <- atomically $ getPeer1 pubKey1
+          peer2 <- atomically $ getPeer2 pubKey2
+          peer3 <- atomically $ getPeer3 pubKey3
+          let devStm = testDeviceWithPeers [(BC.pack "peer1", peer1), (BC.pack "peer2", peer2), (BC.pack "peer3", peer3)]
+          deviceWithPeers <- atomically devStm
+          err <- runConduit (yield (BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=1\nreplace_peers=true\n\n") .| serveConduit deviceWithPeers .| sinkLbs)
+          err `shouldBe` BCL.pack "errno=0\n\n"
+          dev <- runConduit (yield (BC.pack "get=1\n\n") .| serveConduit deviceWithPeers .| sinkLbs)
+          dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=1\nerrno=0\n\n"
       describe "showPeer" $ do
         it "must correctly generate a complete peer bytestring containing one ip range" $ do
           peerPub <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58" 
@@ -87,7 +130,7 @@ spec = do
           let result = feed (parse deviceParser $ BC.pack "private_key=\nlisten_port=777\nfwmark=0\n") BC.empty
           eitherResult result `shouldBe` Right expectedDevice
         it "must parse a remove fwmark device entry" $ do
-          pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          pkHex <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a" 
           let pk = DH.dhBytesToPair $ BA.convert pkHex
           let expectedDevice = RPC.RpcDevicePayload pk 777 Nothing False
           let result = feed (parse deviceParser $ BC.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=777\nfwmark=\n") BC.empty
@@ -199,7 +242,7 @@ spec = do
           testDeviceWithPeers prs = do
             pkH <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a" 
             pshH <- unhex $ BC.pack "188515093e952f5f22e865cef3012e72f8b5f0b598ac0309d5dacce3b70fcf52" 
-            return $ getTestDeviceWithPeers pkH pshH prs
+            getTestDeviceWithPeers pkH pshH prs
             
 
 getGenericPeer :: BS.ByteString -> STM Peer
@@ -239,6 +282,25 @@ getTestDevice pkHex pshHex = do
   writeTVar (port dev) 12912
   return dev
 
+getSetTestDevice :: BS.ByteString -> Int -> Word -> STM Device
+getSetTestDevice pkHex p fwm = do
+  dev <- createDevice "wg0"
+  let keyPair = DH.dhBytesToPair $ BA.convert pkHex
+  writeTVar (localKey dev) keyPair
+  writeTVar (fwmark dev) fwm
+  writeTVar (port dev) p
+  return dev
+
+getSetTestDeviceWithPeers :: BS.ByteString -> Int -> Word -> [(PeerId, Peer)] -> STM Device
+getSetTestDeviceWithPeers pkHex p fwm prs = do
+  dev <- createDevice "wg0"
+  let keyPair = DH.dhBytesToPair $ BA.convert pkHex
+  writeTVar (localKey dev) keyPair
+  writeTVar (fwmark dev) fwm
+  writeTVar (port dev) p
+  writeTVar (peers dev) $ HM.fromList prs
+  return dev
+
 getTestDeviceWithPeers :: BS.ByteString -> BS.ByteString -> [(PeerId, Peer)] -> STM Device
 getTestDeviceWithPeers pkHex pshHex prs = do
   dev <- createDevice "wg0"
@@ -259,6 +321,7 @@ getPeer1 pubHex = do
   where
     pubKey = fromJust . DH.dhBytesToPub $ BA.convert pubHex
     ipRange = [IPv4Range (read "192.168.4.4/32" :: AddrRange IPv4)]
+
 getPeer2 :: BS.ByteString -> STM Peer
 getPeer2 pubHex = do
   peer <- createPeer pubKey
