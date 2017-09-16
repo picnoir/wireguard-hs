@@ -1,5 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{-|
+Module      : Network.WireGuard.Internal.RpcParsers
+Description : Collection of parsers related to the communication with the wg CLI utility.
+Copyright   : Félix Baylac-Jacqué, 2017
+License     : GPL-3
+Maintainer  : felix@alternativebit.fr
+Stability   : experimental
+Portability : POSIX
+
+Collection of attoparsec parsers related to the communication with the wg CLI utility.
+|-}
+
 module Network.WireGuard.Internal.RpcParsers(
   requestParser,
   deviceParser,
@@ -34,7 +46,9 @@ import Network.WireGuard.Internal.Data.RpcTypes (OpType(..),
                                                  RpcDeviceField(..),
                                                  RpcPeerField(..))
 
--- | Attoparsec parser used to parse a RPC request, both Set or Get.
+-- | Parses a RPC operation coming from the wg CLI.
+--
+--   See <https://www.wireguard.com/xplatform/> for more informations about the RPC set operation.
 requestParser :: Parser RpcRequest 
 requestParser = do
   op <- requestTypeParser
@@ -44,16 +58,18 @@ requestParser = do
   _ <- string $ BC.pack "\n"
   return $ RpcRequest op p
 
-requestTypeParser :: Parser OpType
-requestTypeParser = "get=1\n" *> return Get 
-                <|> "set=1\n" *> return Set
-
+-- | Parses a set operation.
+--
+--   See <https://www.wireguard.com/xplatform/> for more informations about the RPC set operation.
 setPayloadParser :: Parser RpcSetPayload
 setPayloadParser = do
   dev <- deviceParser
   peers <- many' peerParser
   return $ RpcSetPayload dev peers
 
+-- | Parses a device entry during a RPC set operation.
+--
+--   See <https://www.wireguard.com/xplatform/> for more informations about the RPC set operation.
 deviceParser :: Parser RpcDevicePayload 
 deviceParser = do
   fields <- deviceFieldsParser
@@ -62,6 +78,35 @@ deviceParser = do
   let fw = join $ listToMaybe [ fwF | RpcFwMark fwF <- fields]
   let rmDev = not $ null [True | RpcReplacePeers <- fields] 
   return $ RpcDevicePayload devPk p fw rmDev
+
+-- | Parses a peer entry during a RPC set operation.
+--
+--   See <https://www.wireguard.com/xplatform/> for more informations about the RPC set operation.
+peerParser :: Parser RpcPeerPayload
+peerParser = do
+    peerPubK   <- parsePubKey
+    fields     <- peerFieldsParser
+    let rm = not $ null [rmF | RpcRmFlag rmF <- fields] 
+    let psh = listToMaybe [pshF | RpcPsh pshF <- fields]
+    let endPL = [endPF | RpcEndp endPF <- fields]
+    endP <- if null endPL
+                then fail "Cannot parse Peer endpoint" 
+                else return $ head endPL
+    let ka   = fromMaybe 0 $ listToMaybe [kaF | RpcKA kaF <- fields]
+    let rmIps = not $ null [rmIpsF | RpcDelIps rmIpsF <- fields]
+    let allIpR = [ipRF | RpcAllIp ipRF <- fields]
+    return $ RpcPeerPayload peerPubK rm psh endP ka rmIps allIpR
+  where
+    parsePubKey = do        
+        _ <- "public_key=" <?> "Peer delimiter"
+        pubHex <- unhex <$> takeTill isEndOfLine :: Parser (Maybe ByteString)
+        _ <- "\n"
+        let pubMaybe = join $ (dhBytesToPub . BA.convert) <$> pubHex
+        maybe (fail "Cannot parse peer's public key") return pubMaybe
+
+requestTypeParser :: Parser OpType
+requestTypeParser = "get=1\n" *> return Get 
+                <|> "set=1\n" *> return Set
 
 deviceFieldsParser :: Parser [RpcDeviceField]
 deviceFieldsParser = many' (deviceFieldParser <* endOfLine)
@@ -85,27 +130,6 @@ deviceFieldParser = do
       return RpcReplacePeers
     _ -> fail "Not a device key"
 
-peerParser :: Parser RpcPeerPayload
-peerParser = do
-    peerPubK   <- parsePubKey
-    fields     <- peerFieldsParser
-    let rm = not $ null [rmF | RpcRmFlag rmF <- fields] 
-    let psh = listToMaybe [pshF | RpcPsh pshF <- fields]
-    let endPL = [endPF | RpcEndp endPF <- fields]
-    endP <- if null endPL
-                then fail "Cannot parse Peer endpoint" 
-                else return $ head endPL
-    let ka   = fromMaybe 0 $ listToMaybe [kaF | RpcKA kaF <- fields]
-    let rmIps = not $ null [rmIpsF | RpcDelIps rmIpsF <- fields]
-    let allIpR = [ipRF | RpcAllIp ipRF <- fields]
-    return $ RpcPeerPayload peerPubK rm psh endP ka rmIps allIpR
-  where
-    parsePubKey = do        
-        _ <- "public_key=" <?> "Peer delimiter"
-        pubHex <- unhex <$> takeTill isEndOfLine :: Parser (Maybe ByteString)
-        _ <- "\n"
-        let pubMaybe = join $ (dhBytesToPub . BA.convert) <$> pubHex
-        maybe (fail "Cannot parse peer's public key") return pubMaybe
 
 peerFieldsParser :: Parser [RpcPeerField]
 peerFieldsParser = many' (peerFieldParser <* endOfLine)

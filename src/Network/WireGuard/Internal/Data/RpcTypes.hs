@@ -1,3 +1,15 @@
+{-|
+Module      : Network.WireGuard.Internal.Data.RpcTypes
+Description : Collection of types used to communicate with the wg CLI utility.
+Copyright   : Félix Baylac-Jacqué, 2017
+License     : GPL-3
+Maintainer  : felix@alternativebit.fr
+Stability   : experimental
+Portability : POSIX
+
+Collection of types used by to communicate with the wg CLI utility.
+|-}
+
 module Network.WireGuard.Internal.Data.RpcTypes(
  OpType(..),
  RpcRequest(..),
@@ -51,6 +63,7 @@ instance Eq RpcDevicePayload where
       ((dhSecToBytes . fst) <$> pk1) == ((dhSecToBytes . fst) <$> pk2) && (prt1 == prt2) &&
       (rp1 == rp2) && (fw1 == fw2)
 
+-- | Key/Value couple of set device operations.
 data RpcDeviceField = RpcPk !(Maybe KeyPair)
                     | RpcPort !Int
                     | RpcFwMark !(Maybe Word)
@@ -77,6 +90,7 @@ instance Show RpcPeerPayload where
     = show (dhPubToBytes pub1) ++ show rm1 ++ show psk1 ++ show e1 ++ show k1 ++ 
       show rp1 ++ show aip1
 
+-- | Key/Value couple of set peer operations.
 data RpcPeerField = RpcRmFlag    !Bool
                   | RpcPsh       !PresharedKey
                   | RpcEndp      !SockAddr
