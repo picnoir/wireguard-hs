@@ -99,7 +99,7 @@ library
     buildable: False
 
   ghc-options:
-    -Wall -O2 
+    -Wall -Werror -O2 
   if flag(static)
     ghc-options:
       -optl-static
@@ -116,7 +116,7 @@ test-suite nara-test
   main-is: Spec.hs
   hs-source-dirs:
       tests/spec
-  ghc-options: -Wall
+  ghc-options: -Wall -Werror
   build-depends:
       attoparsec
     , base == 4.9.*

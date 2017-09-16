@@ -28,7 +28,7 @@ import           Data.Serialize                         (putWord32be,
                                                          runPut)
 import           Foreign.C.Types                        (CTime (..))
 import           Network.Socket                         (SockAddr)
-import           System.IO                              (hPutStrLn, stderr)
+import           System.IO                              (hPrint, stderr)
 import           System.Posix.Time                      (epochTime)
 import           System.Random                          (randomIO)
 
@@ -73,7 +73,7 @@ handleReadTun device readTunChan writeUdpChan = forever $ do
     res <- runExceptT $ processTunPacket device writeUdpChan tunPacket
     case res of
         Right udpPacket -> pushPacketQueue writeUdpChan udpPacket
-        Left err        -> hPutStrLn stderr (show err) -- TODO: proper logging
+        Left err        -> hPrint stderr err -- TODO: proper logging
 
 handleReadUdp :: Device -> PacketQueue UdpPacket -> PacketQueue TunPacket
               -> PacketQueue UdpPacket
@@ -82,7 +82,7 @@ handleReadUdp device readUdpChan writeTunChan writeUdpChan = forever $ do
     udpPacket <- popPacketQueue readUdpChan
     res <- runExceptT $ processUdpPacket device udpPacket
     case res of
-        Left err      -> hPutStrLn stderr (show err) -- TODO: proper logging
+        Left err      -> hPrint stderr err -- TODO: proper logging
         Right mpacket -> case mpacket of
             Just (Right tunp) -> pushPacketQueue writeTunChan tunp
             Just (Left  udpp) -> pushPacketQueue writeUdpChan udpp
@@ -225,7 +225,7 @@ processPacket device@Device{..} _key _psk sock PacketData{..} = do
                         unless (remotePub peer `dhPubEq` remotePub peer') $ throwE SourceAddrBlockedError
                 liftIO $ atomically $ writeTVar (lastReceiveTime peer) now
                 liftIO $ atomically $ modifyTVar' (receivedBytes peer) (+fromIntegral (BA.length decryptedPayload))
-              else do
+              else 
                 liftIO $ atomically $ writeTVar (lastKeepaliveTime peer) now
             return (Just (Right decryptedPayload))
 

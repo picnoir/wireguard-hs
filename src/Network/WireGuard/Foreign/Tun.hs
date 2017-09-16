@@ -27,14 +27,14 @@ openTun intfName threads =
 tunReadBuf :: Fd -> Ptr Word8 -> CSize -> IO CSize
 tunReadBuf _fd _buf 0 = return 0
 tunReadBuf fd buf nbytes =
-    fmap fromIntegral $
+    fromIntegral <$>
         throwErrnoIfMinus1RetryMayBlock "tunReadBuf"
             (tun_read_c (fromIntegral fd) (castPtr buf) nbytes)
                 (threadWaitRead fd)
 
 tunWriteBuf :: Fd -> Ptr Word8 -> CSize -> IO CSize
 tunWriteBuf fd buf len =
-    fmap fromIntegral $
+    fromIntegral <$>
         throwErrnoIfMinus1RetryMayBlock "tunWriteBuf"
             (tun_write_c (fromIntegral fd) (castPtr buf) len)
                 (threadWaitWrite fd)

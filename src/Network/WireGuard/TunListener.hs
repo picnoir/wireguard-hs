@@ -41,5 +41,5 @@ readTun buf fd = do
         (\ptr -> copyMemory ptr buf nbytes >> zeroMemory buf nbytes)
 
 writeTun :: BA.ByteArrayAccess ba => Fd -> ba -> IO ()
-writeTun fd ba = BA.withByteArray ba $ \ptr -> do
+writeTun fd ba = BA.withByteArray ba $ \ptr -> 
     void $ tunWriteBuf fd ptr (fromIntegral (BA.length ba))

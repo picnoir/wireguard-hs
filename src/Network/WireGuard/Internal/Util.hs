@@ -18,6 +18,7 @@ import           Control.Exception                   (Exception (..),
                                                       SomeAsyncException,
                                                       SomeException, throwIO)
 import           Control.Monad.Catch                 (MonadCatch (..))
+import           Data.Foldable                       (forM_)
 import           System.IO                           (hPutStrLn, stderr)
 
 import           Foreign
@@ -49,9 +50,7 @@ catchSomeExceptionAnd what m = catch m $ \(_ :: SomeException) -> what
 withJust :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
 withJust mma func = do
     ma <- mma
-    case ma of
-        Nothing -> return ()
-        Just a  -> func a
+    forM_ ma func 
 
 dropUntilM :: Monad m => (a -> Bool) -> m a -> m a
 dropUntilM cond ma = loop
@@ -66,7 +65,7 @@ zeroMemory :: Ptr a -> CSize -> IO ()
 zeroMemory dest nbytes = memset dest 0 (fromIntegral nbytes)
 
 copyMemory :: Ptr a -> Ptr b -> CSize -> IO ()
-copyMemory dest src nbytes = memcpy dest src nbytes
+copyMemory = memcpy 
 
 foreign import ccall unsafe "string.h" memset :: Ptr a -> CInt -> CSize -> IO ()
 foreign import ccall unsafe "string.h" memcpy :: Ptr a -> Ptr b -> CSize -> IO ()

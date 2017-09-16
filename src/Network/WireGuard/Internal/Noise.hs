@@ -46,7 +46,7 @@ newNoiseState staticKey presharedKey ephemeralKey remotePub role =
 
 sendFirstMessage :: NoiseStateWG -> ScrubbedBytes
                  -> Either SomeException (ByteString, NoiseStateWG)
-sendFirstMessage state0 plaintext1 = writeMessage state0 plaintext1
+sendFirstMessage = writeMessage
 
 recvFirstMessageAndReply :: NoiseStateWG -> ByteString -> ScrubbedBytes
                          -> Either SomeException (ByteString, ScrubbedBytes, PublicKey, SessionKey)

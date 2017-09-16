@@ -44,7 +44,7 @@ data RpcDevicePayload = RpcDevicePayload {
 instance Show RpcDevicePayload where
   show (RpcDevicePayload kp lp fwM rpp) = show (showKeyPair <$> kp) ++ show lp ++ show fwM ++ show rpp
    where
-     showKeyPair (pk, _) = show $ dhSecToBytes pk
+     showKeyPair (pr, _) = show $ dhSecToBytes pr
 
 instance Eq RpcDevicePayload where
     (==) (RpcDevicePayload pk1 prt1 fw1 rp1) (RpcDevicePayload pk2 prt2 fw2 rp2) =

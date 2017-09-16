@@ -57,11 +57,11 @@ setPayloadParser = do
 deviceParser :: Parser RpcDevicePayload 
 deviceParser = do
   fields <- deviceFieldsParser
-  let pk = join $ listToMaybe [ pkF | RpcPk pkF <- fields]
+  let devPk = join $ listToMaybe [ pkF | RpcPk pkF <- fields]
   let p  = head [ pF | RpcPort pF <- fields]
   let fw = join $ listToMaybe [ fwF | RpcFwMark fwF <- fields]
   let rmDev = not $ null [True | RpcReplacePeers <- fields] 
-  return $ RpcDevicePayload pk p fw rmDev
+  return $ RpcDevicePayload devPk p fw rmDev
 
 deviceFieldsParser :: Parser [RpcDeviceField]
 deviceFieldsParser = many' (deviceFieldParser <* endOfLine)
@@ -87,8 +87,8 @@ deviceFieldParser = do
 
 peerParser :: Parser RpcPeerPayload
 peerParser = do
-    pubK   <- parsePubKey
-    fields <- peerFieldsParser
+    peerPubK   <- parsePubKey
+    fields     <- peerFieldsParser
     let rm = not $ null [rmF | RpcRmFlag rmF <- fields] 
     let psh = listToMaybe [pshF | RpcPsh pshF <- fields]
     let endPL = [endPF | RpcEndp endPF <- fields]
@@ -98,7 +98,7 @@ peerParser = do
     let ka   = fromMaybe 0 $ listToMaybe [kaF | RpcKA kaF <- fields]
     let rmIps = not $ null [rmIpsF | RpcDelIps rmIpsF <- fields]
     let allIpR = [ipRF | RpcAllIp ipRF <- fields]
-    return $ RpcPeerPayload pubK rm psh endP ka rmIps allIpR
+    return $ RpcPeerPayload peerPubK rm psh endP ka rmIps allIpR
   where
     parsePubKey = do        
         _ <- "public_key=" <?> "Peer delimiter"
