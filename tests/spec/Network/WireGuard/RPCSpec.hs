@@ -82,18 +82,32 @@ spec = do
           dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\nfwmark=1\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.4.4/32\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.4.6/32\nerrno=0\n\n"
         it "must repond to a correctly formed set device's peers V1 request with one peer remove instruction" $ do
           pk <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
-          let devStm = getSetTestDevice pk 777 1
-          dev <- atomically devStm 
           pubKey1 <- unhex $ BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33"
           pubKey2 <- unhex $ BC.pack "58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376"
           pubKey3 <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58"
           peer1 <- atomically $ getPeer1 pubKey1
           peer2 <- atomically $ getPeer2 pubKey2
           peer3 <- atomically $ getPeer3 pubKey3
-          err <- runConduit (yield (BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nremove=true\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.4.4/32\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.4.6/32\n\n") .| serveConduit dev .| sinkLbs)
+          let devStm = getSetTestDeviceWithPeers pk 777 1 [(BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33",peer1),(BC.pack "58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376",peer2),(BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58",peer3)]
+          dev <- atomically devStm 
+          err <- runConduit (yield (BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nremove=true\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.4.4/32\n\n") .| serveConduit dev .| sinkLbs)
           err `shouldBe` BCL.pack "errno=0\n\n"
           dev <- runConduit (yield (BC.pack "get=1\n\n") .| serveConduit dev .| sinkLbs)
-          dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\nfwmark=1\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.4.6/32\nerrno=0\n\n"
+          dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\nfwmark=1\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\ntx_bytes=1212111\nrx_bytes=1929999999\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\ntx_bytes=38333\nrx_bytes=2224\nallowed_ip=192.168.4.6/32\nerrno=0\n\n"
+        it "must repond to a correctly formed set device's peers V1 request with one peer alter instruction" $ do
+          pk <- unhex $ BC.pack "e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a"
+          pubKey1 <- unhex $ BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33"
+          pubKey2 <- unhex $ BC.pack "58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376"
+          pubKey3 <- unhex $ BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58"
+          peer1 <- atomically $ getPeer1 pubKey1
+          peer2 <- atomically $ getPeer2 pubKey2
+          peer3 <- atomically $ getPeer3 pubKey3
+          let devStm = getSetTestDeviceWithPeers pk 777 1 [(BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33",peer1),(BC.pack "58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376",peer2),(BC.pack "662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58",peer3)]
+          dev <- atomically devStm 
+          err <- runConduit (yield (BC.pack "set=1\nprivate_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\npublic_key=b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33\nremove=true\nendpoint=[abcd:23::33%2]:51820\nallowed_ip=192.168.4.4/32\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\nallowed_ip=192.168.5.6/32\n\n") .| serveConduit dev .| sinkLbs)
+          err `shouldBe` BCL.pack "errno=0\n\n"
+          dev <- runConduit (yield (BC.pack "get=1\n\n") .| serveConduit dev .| sinkLbs)
+          dev `shouldBe` BCL.pack "private_key=e84b5a6d2717c1003a13b431570353dbaca9146cf150c5f8575680feba52027a\nlisten_port=12912\nfwmark=1\npublic_key=662e14fd594556f522604703340351258903b64f35553763f19426ab2a515c58\nendpoint=5.152.198.39:51820\ntx_bytes=1212111\nrx_bytes=1929999999\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\nallowed_ip=192.168.4.10/32\nallowed_ip=192.168.4.11/32\npublic_key=58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376\nendpoint=182.122.22.19:3233\npersistent_keepalive_interval=111\ntx_bytes=38333\nrx_bytes=2224\nallowed_ip=192.168.4.6/32\nallowed_ip=192.168.5.6/32\nerrno=0\n\n"
         it "must repond to a correctly formed delete device's peers set V1 request" $ do
           pubKey1 <- unhex $ BC.pack "b85996fecc9c7f1fc6d2572a76eda11d59bcd20be8e543b15ce4bd85a8e75a33"
           pubKey2 <- unhex $ BC.pack "58402e695ba1772b1cc9309755f043251ea77fdcf10fbe63989ceb7e19321376"
