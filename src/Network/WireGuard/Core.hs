@@ -43,6 +43,7 @@ import           Network.WireGuard.Internal.PacketQueue
 import           Network.WireGuard.Internal.State
 import           Network.WireGuard.Internal.Data.Types
 import           Network.WireGuard.Internal.Util
+--import           Network.WireGuard.Internal.Stream.Handshake
 
 runCore :: Device
         -> PacketQueue (Time, TunPacket) -> PacketQueue TunPacket
@@ -315,13 +316,6 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
         Just packet -> pushPacketQueue chan (packet, endp) >> return True
         Nothing     -> return False
 
-genTai64n :: Time -> TAI64n
-genTai64n (CTime now) = runPut $ do
-    putWord64be (fromIntegral now + 4611686018427387914)
-    putWord32be 0
-
-addTime :: Time -> Int -> Time
-addTime (CTime now) secs = CTime (now + fromIntegral secs)
 
 getMac1 :: PublicKey -> Maybe PresharedKey -> BS.ByteString -> BS.ByteString
 getMac1 pub mpsk payload =
@@ -336,3 +330,11 @@ assertJust err ma = do
     case res of
         Just a  -> return a
         Nothing -> throwE err
+
+addTime :: Time -> Int -> Time
+addTime (CTime now) secs = CTime (now + fromIntegral secs)
+
+genTai64n :: Time -> TAI64n
+genTai64n (CTime now) = runPut $ do
+    putWord64be (fromIntegral now + 4611686018427387914)
+    putWord32be 0

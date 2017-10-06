@@ -2,7 +2,8 @@
 module Network.WireGuard.Internal.Stream.Handshake
 (
   handshakeInit,
-  processIncomingPacket
+  processHandshakeInitiation,
+  processHandshakeResponse
 ) where
 
 import qualified Data.ByteArray                  as BA  (convert, length)
@@ -16,7 +17,7 @@ import           Control.Monad.Trans.Except             (ExceptT, throwE)
 import           Control.Monad.STM                      (STM)
 import           Control.Monad.Trans.Maybe              (MaybeT)
 import           Control.Monad.Trans.Class              (lift)
-import           Control.Concurrent.STM.TVar            (readTVar, writeTVar)
+import           Control.Concurrent.STM.TVar            (readTVar, writeTVar, newTVar)
 import           Crypto.Noise                           (HandshakeRole(..))
 import           Crypto.Noise.DH                        (dhPubToBytes)
 import           Crypto.Hash.BLAKE2.BLAKE2s             (finalize, update, initialize,
@@ -31,13 +32,13 @@ import Network.WireGuard.Internal.State
 import Network.WireGuard.Internal.Packet
 import Network.WireGuard.Internal.Noise
 
-handshakeInit :: HandshakeSeed -> Device -> KeyPair -> Maybe PresharedKey
+handshakeInit :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey
                             -> Peer -> Maybe Time
                             -> MaybeT STM BS.ByteString
 handshakeInit seed device key psk peer@Peer{..} stopTime = do
     let ekey   = handshakeEphemeralKey seed
-    let now    = handshakeTimeStamp seed
-    let hsSeed = handshakeIndex seed
+    let now    = handshakeNowTS seed
+    let hsSeed = handshakeSeed seed
     let state0 = newNoiseState key psk ekey (Just remotePub) InitiatorRole
         Right (payload, state1) = sendFirstMessage state0 timestamp
         timestamp = BA.convert (genTai64n now)
@@ -59,12 +60,12 @@ handshakeInit seed device key psk peer@Peer{..} stopTime = do
         Just packet -> return packet
         Nothing     -> fail "Packet not generated"
 
-processIncomingPacket :: HandshakeSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
+processHandshakeInitiation :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
               -> ExceptT WireGuardError STM (Maybe (Either UdpPacket TunPacket))
-processIncomingPacket seed device@Device{..} key psk sock HandshakeInitiation{..} = do
-    let ekey = handshakeEphemeralKey seed
-    let now = handshakeTimeStamp seed
-    let hsSeed = handshakeIndex seed
+processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock HandshakeInitiation{..} = do
+    let ekey   = handshakeEphemeralKey 
+    let now    = handshakeNowTS 
+    let hsSeed = handshakeSeed 
     let state0 = newNoiseState key psk ekey Nothing ResponderRole
         outcome = recvFirstMessageAndReply state0 encryptedPayload mempty
     case outcome of
@@ -86,6 +87,35 @@ processIncomingPacket seed device@Device{..} key psk sock HandshakeInitiation{..
             let responsePacket = runPut $ buildPacket (getMac1 rpub psk) $
                     HandshakeResponse ourindex senderIndex reply
             return $ Just (Left (responsePacket, sock))
+
+processHandshakeResponse :: HandshakeRespSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
+              -> ExceptT WireGuardError STM (Maybe (Either UdpPacket TunPacket))
+processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{..} = do
+    peer <- assertJust UnknownIndexError $
+        HM.lookup receiverIndex <$> lift (readTVar indexMap)
+    iwait <- assertJust OutdatedPacketError $ lift (readTVar (initiatorWait peer))
+    when (initOurIndex iwait /= receiverIndex) $ throwE OutdatedPacketError
+    let state1 = initNoise iwait
+        outcome = recvSecondMessage state1 encryptedPayload
+    case outcome of
+        Left err                      -> throwE (NoiseError err)
+        Right (decryptedPayload, sks) -> do
+            newCounter <- lift $ newTVar 0
+            let newsession = Session receiverIndex senderIndex sks
+                    (addTime now sessionRenewTime)
+                    (addTime now sessionExpireTime)
+                    newCounter
+            when (BA.length decryptedPayload /= 0) $
+                throwE $ InvalidWGPacketError "empty payload expected"
+            succeeded <- lift $ do
+                erased <- eraseInitiatorWait device peer (Just receiverIndex)
+                when erased $ do
+                    addSession device peer newsession
+                    writeTVar (lastHandshakeTime peer) (Just now)
+                return erased
+            unless succeeded $ throwE OutdatedPacketError
+            lift $ updateEndPoint peer sock
+            return Nothing
 
 genTai64n :: Time -> TAI64n
 genTai64n (CTime now) = runPut $ do
