@@ -15,7 +15,6 @@ import           Data.Maybe                             (isNothing, fromMaybe)
 import           Control.Monad                          (when, unless, void)
 import           Control.Monad.Trans.Except             (ExceptT, throwE)
 import           Control.Monad.STM                      (STM)
-import           Control.Monad.Trans.Maybe              (MaybeT)
 import           Control.Monad.Trans.Class              (lift)
 import           Control.Concurrent.STM.TVar            (readTVar, writeTVar, newTVar)
 import           Crypto.Noise                           (HandshakeRole(..))
@@ -32,41 +31,38 @@ import Network.WireGuard.Internal.State
 import Network.WireGuard.Internal.Packet
 import Network.WireGuard.Internal.Noise
 
+
 handshakeInit :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey
                             -> Peer -> Maybe Time
-                            -> MaybeT STM BS.ByteString
+                            -> ExceptT HandshakeError STM BS.ByteString
 handshakeInit seed device key psk peer@Peer{..} stopTime = do
     let ekey   = handshakeEphemeralKey seed
-    let now    = handshakeNowTS seed
-    let hsSeed = handshakeSeed seed
-    let state0 = newNoiseState key psk ekey (Just remotePub) InitiatorRole
+        now    = handshakeNowTS seed
+        hsSeed = handshakeSeed seed
+        state0 = newNoiseState key psk ekey (Just remotePub) InitiatorRole
         Right (payload, state1) = sendFirstMessage state0 timestamp
         timestamp = BA.convert (genTai64n now)
-    mpacket <- do
-        isEmpty <- lift $ isNothing <$> readTVar initiatorWait
-        if isEmpty
-          then do
-            index <- lift $ acquireEmptyIndex device peer hsSeed
-            let iwait = InitiatorWait index
-                    (addTime now handshakeRetryTime)
-                    (fromMaybe (addTime now handshakeStopTime) stopTime)
-                    state1
-            lift $ writeTVar initiatorWait (Just iwait)
-            let packet = runPut $ buildPacket (getMac1 remotePub psk) $
-                    HandshakeInitiation index payload
-            return (Just packet)
-          else return Nothing
-    case mpacket of
-        Just packet -> return packet
-        Nothing     -> fail "Packet not generated"
+    isEmpty <- lift $ isNothing <$> readTVar initiatorWait
+    if isEmpty
+      then do
+        index <- lift $ acquireEmptyIndex device peer hsSeed
+        let iwait = InitiatorWait index
+                (addTime now handshakeRetryTime)
+                (fromMaybe (addTime now handshakeStopTime) stopTime)
+                state1
+            packet = runPut . buildPacket (getMac1 remotePub psk) $
+                HandshakeInitiation index payload
+        lift $ writeTVar initiatorWait (Just iwait)
+        return packet
+      else throwE OngoingHandshake
 
 processHandshakeInitiation :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
-              -> ExceptT WireGuardError STM (Maybe (Either UdpPacket TunPacket))
+              -> ExceptT WireGuardError STM (Either UdpPacket TunPacket)
 processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock HandshakeInitiation{..} = do
-    let ekey   = handshakeEphemeralKey 
-    let now    = handshakeNowTS 
-    let hsSeed = handshakeSeed 
-    let state0 = newNoiseState key psk ekey Nothing ResponderRole
+    let ekey    = handshakeEphemeralKey 
+        now     = handshakeNowTS 
+        hsSeed  = handshakeSeed 
+        state0  = newNoiseState key psk ekey Nothing ResponderRole
         outcome = recvFirstMessageAndReply state0 encryptedPayload mempty
     case outcome of
         Left err                                   -> throwE (NoiseError err)
@@ -86,7 +82,7 @@ processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock 
                 return ourindex
             let responsePacket = runPut $ buildPacket (getMac1 rpub psk) $
                     HandshakeResponse ourindex senderIndex reply
-            return $ Just (Left (responsePacket, sock))
+            return $ Left (responsePacket, sock)
 
 processHandshakeResponse :: HandshakeRespSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
               -> ExceptT WireGuardError STM (Maybe (Either UdpPacket TunPacket))

@@ -1,5 +1,6 @@
 module Network.WireGuard.Internal.Data.Handshake (
  HandshakeInitSeed (..),
+ HandshakeError(..),
  HandshakeRespSeed
 ) where
   
@@ -15,4 +16,6 @@ data HandshakeInitSeed =
    handshakeSeed         :: Word32}
 
 type HandshakeRespSeed = EpochTime
+
+data HandshakeError = OngoingHandshake
   
