@@ -16,8 +16,10 @@ import           System.Posix.IO                 (OpenMode (..), closeFd,
                                                   stdOutput)
 import           System.Posix.Process            (forkProcess)
 import           System.Posix.Types              (Fd)
-
-import           Options.Applicative
+import           Options.Applicative             (ParserInfo, info, helper,
+                                                  fullDesc, switch, long, short,
+                                                  help, argument, metavar, str,
+                                                  execParser)
 
 import           Network.WireGuard.Daemon        (runDaemon)
 import           Network.WireGuard.Foreign.Tun   (openTun)

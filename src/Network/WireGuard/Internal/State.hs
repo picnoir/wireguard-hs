@@ -31,18 +31,25 @@ import           Crypto.Noise                        (NoiseState)
 import           Crypto.Noise.Cipher.ChaChaPoly1305  (ChaChaPoly1305)
 import           Crypto.Noise.DH.Curve25519          (Curve25519)
 import           Crypto.Noise.Hash.BLAKE2s           (BLAKE2s)
-import qualified Data.HashMap.Strict                 as HM
+import qualified Data.HashMap.Strict                 as HM (HashMap, empty, member,
+                                                            insert, delete)
 import           Data.IP                             (IPRange (..), IPv4, IPv6)
-import qualified Data.IP.RouteTable                  as RT
+import qualified Data.IP.RouteTable                  as RT (IPRTable, empty, fromList)
 import           Data.Maybe                          (catMaybes, fromJust,
                                                       isNothing, mapMaybe)
-import           Data.Word
+import           Data.Word                           (Word64)
 import           Network.Socket.Internal             (SockAddr)
+import           Control.Concurrent.STM              (TVar, STM, newTVar,
+                                                      writeTVar, readTVar,
+                                                      modifyTVar', readTVarIO,
+                                                      registerDelay, atomically,
+                                                      retry)
 
-import           Control.Concurrent.STM
-
-import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.Data.Types
+import           Network.WireGuard.Internal.Constant   (maxActiveSessions)
+import           Network.WireGuard.Internal.Data.Types (KeyPair, PresharedKey, PeerId,
+                                                        Index, PublicKey, Time,
+                                                        TAI64n, SessionKey, Counter,
+                                                        farFuture)
 
 data Device = Device
             { intfName     :: String

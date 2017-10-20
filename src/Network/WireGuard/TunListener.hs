@@ -2,20 +2,24 @@ module Network.WireGuard.TunListener
   ( runTunListener
   ) where
 
-import           Control.Concurrent.Async               (wait, withAsync)
-import           Control.Monad                          (forever, void)
-import qualified Data.ByteArray                         as BA
-import           Data.Word                              (Word8)
-import           Foreign.Marshal.Alloc                  (allocaBytes)
-import           Foreign.Ptr                            (Ptr)
-import           System.Posix.Time                      (epochTime)
-import           System.Posix.Types                     (Fd)
+import           Control.Concurrent.Async                     (wait, withAsync)
+import           Control.Monad                                (forever, void)
+import qualified Data.ByteArray                         as BA (ByteArray, allocRet,
+                                                               ByteArrayAccess, withByteArray,
+                                                               length)
+import           Data.Word                                    (Word8)
+import           Foreign.Marshal.Alloc                        (allocaBytes)
+import           Foreign.Ptr                                  (Ptr)
+import           System.Posix.Time                            (epochTime)
+import           System.Posix.Types                           (Fd)
 
-import           Network.WireGuard.Foreign.Tun
-import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.PacketQueue
-import           Network.WireGuard.Internal.Data.Types
-import           Network.WireGuard.Internal.Util
+import           Network.WireGuard.Foreign.Tun                (tunReadBuf, tunWriteBuf)
+import           Network.WireGuard.Internal.Constant          (tunReadBufferLength)
+import           Network.WireGuard.Internal.PacketQueue       (PacketQueue, pushPacketQueue,
+                                                               popPacketQueue)
+import           Network.WireGuard.Internal.Data.Types        (Time, TunPacket)
+import           Network.WireGuard.Internal.Util              (retryWithBackoff, copyMemory,
+                                                               zeroMemory)
 
 runTunListener :: [Fd] -> PacketQueue (Time, TunPacket) -> PacketQueue TunPacket -> IO ()
 runTunListener fds readTunChan writeTunChan = loop fds []

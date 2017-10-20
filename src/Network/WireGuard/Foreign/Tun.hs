@@ -10,9 +10,12 @@ import           Control.Concurrent     (threadWaitRead, threadWaitWrite)
 import           Control.Monad          (forM_)
 import           System.Posix.Internals (setNonBlockingFD)
 import           System.Posix.Types     (Fd (..))
-
-import           Foreign
-import           Foreign.C
+import           Foreign                (Ptr, Word8,
+                                         allocaArray, peekArray,
+                                         castPtr)
+import           Foreign.C              (CSize(..), CString, CInt(..),
+                                         CChar, withCString, throwErrnoIfMinus1Retry,
+                                         throwErrnoIfMinus1RetryMayBlock)
 
 openTun :: String -> Int -> IO [Fd]
 openTun intfName threads =

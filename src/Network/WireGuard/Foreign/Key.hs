@@ -4,9 +4,10 @@ module Network.WireGuard.Foreign.Key
   , toByteString
   ) where
 
-import qualified Data.ByteString                     as BS
-
-import           Foreign
+import qualified Data.ByteString as BS (ByteString, length, unpack,
+                                        pack)
+import           Foreign               (Storable(..), Word8, peekArray,
+                                        castPtr, pokeArray)
 
 import           Network.WireGuard.Internal.Constant (keyLength)
 

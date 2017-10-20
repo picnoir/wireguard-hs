@@ -13,36 +13,68 @@ import           Control.Monad.IO.Class                 (liftIO)
 import           Control.Monad.STM                      (atomically)
 import           Control.Monad.Trans.Except             (ExceptT, runExceptT,
                                                          throwE)
-import           Crypto.Noise                           (HandshakeRole (..))
+import           Crypto.Noise                           (HandshakeRole(ResponderRole, InitiatorRole))
 import           Crypto.Noise.DH                        (dhGenKey, dhPubEq,
                                                          dhPubToBytes)
-import qualified Data.ByteArray                         as BA
-import qualified Data.ByteString                        as BS
-import qualified Data.HashMap.Strict                    as HM
+import qualified Data.ByteArray                         as BA (length, convert)
+import qualified Data.ByteString                        as BS (ByteString)
+import qualified Data.HashMap.Strict                    as HM (lookup)
 import           Data.IP                                (makeAddrRange)
-import qualified Data.IP.RouteTable                     as RT
+import qualified Data.IP.RouteTable                     as RT (lookup)
 import           Data.Maybe                             (fromMaybe, isJust,
                                                          isNothing)
 import           Data.Serialize                         (putWord32be,
                                                          putWord64be, runGet,
                                                          runPut)
-import           Foreign.C.Types                        (CTime (..))
+import           Foreign.C.Types                        (CTime(CTime))
 import           Network.Socket                         (SockAddr)
 import           System.IO                              (hPrint, stderr)
 import           System.Posix.Time                      (epochTime)
 import           System.Random                          (randomIO)
 
-import           Control.Concurrent.STM.TVar
-import           Crypto.Hash.BLAKE2.BLAKE2s
+import           Control.Concurrent.STM.TVar            (readTVarIO, modifyTVar',
+                                                         writeTVar, newTVar, readTVar)
+import           Crypto.Hash.BLAKE2.BLAKE2s             (finalize, update, initialize,
+                                                         initialize')
 
-import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.IPPacket
-import           Network.WireGuard.Internal.Noise
-import           Network.WireGuard.Internal.Packet
-import           Network.WireGuard.Internal.PacketQueue
-import           Network.WireGuard.Internal.State
-import           Network.WireGuard.Internal.Data.Types
-import           Network.WireGuard.Internal.Util
+import           Network.WireGuard.Internal.Constant    (heartbeatWaitTime, handshakeRetryTime,
+                                                         timestampLength, handshakeStopTime,
+                                                         sessionRenewTime, sessionExpireTime,
+                                                         sessionKeepaliveTime, mac1Length)
+import           Network.WireGuard.Internal.IPPacket    (IPPacket(InvalidIPPacket), 
+                                                         IPPacket(IPv4Packet, IPv6Packet),
+                                                         parseIPPacket)
+import           Network.WireGuard.Internal.Noise       (encryptMessage, newNoiseState,
+                                                         recvFirstMessageAndReply, recvSecondMessage,
+                                                         decryptMessage, sendFirstMessage)
+import           Network.WireGuard.Internal.Packet      (Packet(HandshakeInitiation, HandshakeResponse),
+                                                         Packet(PacketData), buildPacket, parsePacket,
+                                                         encryptedPayload, senderIndex, receiverIndex,
+                                                         counter, authTag)
+import           Network.WireGuard.Internal.PacketQueue (PacketQueue, popPacketQueue,
+                                                         pushPacketQueue)
+import           Network.WireGuard.Internal.State       (Device(Device), ResponderWait(ResponderWait),
+                                                         Peer(Peer), localKey, presharedKey,
+                                                         routeTable4, routeTable6, getSession,
+                                                         endPoint, waitForSession, nextNonce,
+                                                         sessionKey, theirIndex, renewTime, transferredBytes,
+                                                         lastTransferTime, peers, updateTai64n, 
+                                                         acquireEmptyIndex, eraseResponderWait,
+                                                         responderWait, indexMap, initiatorWait,
+                                                         initOurIndex, initNoise, Session(Session),
+                                                         eraseInitiatorWait, addSession,
+                                                         lastHandshakeTime, updateEndPoint,
+                                                         findSession, respOurIndex, respTheirIndex,
+                                                         respSessionKey, remotePub, remotePub,
+                                                         lastReceiveTime, receivedBytes, lastKeepaliveTime,
+                                                         initStopTime, initRetryTime, respStopTime,
+                                                         filterSessions, expireTime, 
+                                                         InitiatorWait(InitiatorWait))
+import           Network.WireGuard.Internal.Data.Types  (Time, TunPacket, UdpPacket,
+                                                         WireGuardError(..), KeyPair, PresharedKey,
+                                                         PublicKey, TAI64n, getPeerId)
+import           Network.WireGuard.Internal.Util        (ignoreSyncExceptions, withJust,
+                                                         retryWithBackoff, dropUntilM)
 --import           Network.WireGuard.Internal.Stream.Handshake
 
 runCore :: Device

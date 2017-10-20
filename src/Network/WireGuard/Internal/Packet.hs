@@ -6,14 +6,23 @@ module Network.WireGuard.Internal.Packet
   , buildPacket
   ) where
 
-import           Control.Monad                       (replicateM_, unless, when)
-import qualified Data.ByteString                     as BS
-import           Foreign.Storable                    (sizeOf)
+import           Control.Monad                             (replicateM_, unless, when)
+import qualified Data.ByteString                     as BS (ByteString)
+import           Foreign.Storable                          (sizeOf)
+import           Data.Serialize                            (Get, Putter,
+                                                            Put, lookAhead,
+                                                            skip, getWord8,
+                                                            getWord32le, remaining,
+                                                            getBytes, putWord8,
+                                                            putWord32le, putWord64le,
+                                                            getWord64le, putByteString,
+                                                            isolate, runPut)
 
-import           Data.Serialize
-
-import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.Data.Types
+import           Network.WireGuard.Internal.Constant       (keyLength, aeadLength,
+                                                            timestampLength, mac1Length,
+                                                            mac2Length, authLength)
+import           Network.WireGuard.Internal.Data.Types     (Index, EncryptedPayload,
+                                                            Counter, AuthTag)
 
 data Packet = HandshakeInitiation
               { senderIndex      :: !Index

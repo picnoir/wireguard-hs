@@ -20,11 +20,10 @@ import           Control.Exception                   (Exception (..),
 import           Control.Monad.Catch                 (MonadCatch (..))
 import           Data.Foldable                       (forM_)
 import           System.IO                           (hPutStrLn, stderr)
+import           Foreign                             (Ptr)
+import           Foreign.C                           (CSize(..), CInt(..))
 
-import           Foreign
-import           Foreign.C
-
-import           Network.WireGuard.Internal.Constant
+import           Network.WireGuard.Internal.Constant (retryMaxWaitTime)
 
 retryWithBackoff :: IO () -> IO ()
 retryWithBackoff = foreverWithBackoff . ignoreSyncExceptions

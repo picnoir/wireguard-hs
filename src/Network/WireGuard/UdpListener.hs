@@ -15,12 +15,13 @@ import           Data.Streaming.Network                 (bindPortUDP,
 import           Network.Socket                         (Socket, close)
 import           Network.Socket.ByteString              (recvFrom, sendTo)
 
-import           Network.WireGuard.Internal.State       (Device (..))
+import           Network.WireGuard.Internal.State       (Device, port)
 
-import           Network.WireGuard.Internal.Constant
-import           Network.WireGuard.Internal.PacketQueue
-import           Network.WireGuard.Internal.Data.Types
-import           Network.WireGuard.Internal.Util
+import           Network.WireGuard.Internal.Constant    (udpReadBufferLength)
+import           Network.WireGuard.Internal.PacketQueue (PacketQueue, pushPacketQueue,
+                                                         popPacketQueue)
+import           Network.WireGuard.Internal.Data.Types  (UdpPacket)
+import           Network.WireGuard.Internal.Util        (retryWithBackoff)
 
 runUdpListener :: Device -> PacketQueue UdpPacket -> PacketQueue UdpPacket -> IO ()
 runUdpListener device readUdpChan writeUdpChan = loop 0

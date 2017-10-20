@@ -7,7 +7,7 @@ author:              Bin Jin
 maintainer:          bjin@ctrl-d.org
 category:            Network
 build-type:          Simple
-extra-source-files:  include/uapi.h, cbits/tun.h
+extra-source-files:  cbits/tun.h
 cabal-version:       >=1.10
 description:
     nara is a userspace implementation of <https://www.wireguard.io WireGuard> ,
@@ -43,17 +43,8 @@ library
   exposed-modules:
     Network.WireGuard.Core,
     Network.WireGuard.Daemon,
-    Network.WireGuard.Foreign.In6Addr,
     Network.WireGuard.Foreign.Key,
     Network.WireGuard.Foreign.Tun,
-    Network.WireGuard.Foreign.UAPI,
-    Network.WireGuard.RPC,
-    Network.WireGuard.TunListener,
-    Network.WireGuard.UdpListener,
-    Network.WireGuard.Internal.Util,
-    Network.WireGuard.Internal.Constant,
-    Network.WireGuard.Internal.IPPacket,
-    Network.WireGuard.Internal.Noise,
     Network.WireGuard.Internal.Packet,
     Network.WireGuard.Internal.PacketQueue,
     Network.WireGuard.Internal.RpcParsers,
@@ -61,7 +52,14 @@ library
     Network.WireGuard.Internal.Data.Types,
     Network.WireGuard.Internal.Data.RpcTypes,
     Network.WireGuard.Internal.Data.Handshake,
-    Network.WireGuard.Internal.Stream.Handshake
+    Network.WireGuard.Internal.Stream.Handshake,
+    Network.WireGuard.Internal.Constant
+    Network.WireGuard.Internal.IPPacket
+    Network.WireGuard.Internal.Noise
+    Network.WireGuard.Internal.Util
+    Network.WireGuard.RPC
+    Network.WireGuard.TunListener
+    Network.WireGuard.UdpListener
   build-depends:
     async,
     attoparsec,
@@ -108,8 +106,6 @@ library
 
   hs-source-dirs:
     src
-  include-dirs:
-    include
   default-language:
     Haskell2010
 

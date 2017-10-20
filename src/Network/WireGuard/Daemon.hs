@@ -10,8 +10,10 @@ import           System.Directory                       (removeFile)
 import           System.Posix.IO                        (closeFd)
 import           System.Posix.Types                     (Fd)
 
-import           Control.Concurrent.MVar
-import           System.Posix.Signals
+import           Control.Concurrent.MVar                (newEmptyMVar, putMVar,
+                                                         takeMVar)
+import           System.Posix.Signals                   (installHandler, sigTERM,
+                                                         Handler(Catch), sigINT)
 
 import           Network.WireGuard.Core                 (runCore)
 import           Network.WireGuard.Internal.State       (createDevice)
@@ -19,8 +21,8 @@ import           Network.WireGuard.RPC                  (runRPC)
 import           Network.WireGuard.TunListener          (runTunListener)
 import           Network.WireGuard.UdpListener          (runUdpListener)
 
-import           Network.WireGuard.Internal.PacketQueue
-import           Network.WireGuard.Internal.Util
+import           Network.WireGuard.Internal.PacketQueue (newPacketQueue)
+import           Network.WireGuard.Internal.Util        (catchIOExceptionAnd)
 
 runDaemon :: String -> FilePath -> [Fd] -> IO ()
 runDaemon intfName sockPath tunFds = do

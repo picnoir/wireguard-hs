@@ -29,9 +29,20 @@ import qualified Data.ByteString                    as BS
 import           Data.Maybe                         (fromJust)
 import           Data.Serialize                     (putWord64le, runPut)
 
-import           Crypto.Noise
+import           Crypto.Noise                       (NoiseState, HandshakeRole,
+                                                     noiseState, defaultHandshakeOpts,
+                                                     hoPrologue, hoLocalStatic,
+                                                     hoPreSharedKey, hoRemoteStatic,
+                                                     hoLocalEphemeral, writeMessage,
+                                                     readMessage, handshakeComplete,
+                                                     remoteStaticKey, NoiseException(..))
 
-import           Network.WireGuard.Internal.Data.Types
+import           Network.WireGuard.Internal.Data.Types (KeyPair, PresharedKey,
+                                                        PublicKey, SessionKey,
+                                                        Counter, EncryptedPayload,
+                                                        AuthTag, SessionKey,
+                                                        sendKey, recvKey,
+                                                        SessionKey(..))
 
 type NoiseStateWG = NoiseState ChaChaPoly1305 Curve25519 BLAKE2s
 

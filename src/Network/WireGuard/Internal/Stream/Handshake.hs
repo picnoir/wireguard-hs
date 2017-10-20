@@ -24,12 +24,24 @@ import           Crypto.Hash.BLAKE2.BLAKE2s             (finalize, update, initi
 import           Network.Socket                         (SockAddr)
 import           Foreign.C.Types                        (CTime(..))
 
-import Network.WireGuard.Internal.Constant
-import Network.WireGuard.Internal.Data.Types
-import Network.WireGuard.Internal.Data.Handshake
-import Network.WireGuard.Internal.State
-import Network.WireGuard.Internal.Packet
-import Network.WireGuard.Internal.Noise
+import Network.WireGuard.Internal.Constant              (handshakeRetryTime, handshakeStopTime,
+                                                         sessionRenewTime, timestampLength,
+                                                         sessionExpireTime, mac1Length)
+import Network.WireGuard.Internal.Data.Types            (KeyPair, PresharedKey,
+                                                         Time, WireGuardError(..),
+                                                         UdpPacket, TunPacket, TAI64n,
+                                                         PublicKey, getPeerId)
+import Network.WireGuard.Internal.Data.Handshake        (HandshakeInitSeed(..), HandshakeRespSeed,
+                                                         HandshakeError(..))
+import Network.WireGuard.Internal.State                 (Device(..), Peer(..),
+                                                         acquireEmptyIndex, InitiatorWait(..),
+                                                         updateTai64n, eraseResponderWait,
+                                                         ResponderWait(..), Session(..),
+                                                         eraseInitiatorWait, addSession,
+                                                         updateEndPoint)
+import Network.WireGuard.Internal.Packet                (Packet(..), buildPacket)
+import Network.WireGuard.Internal.Noise                 (newNoiseState, sendFirstMessage,
+                                                         recvFirstMessageAndReply, recvSecondMessage)
 
 
 handshakeInit :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey
@@ -83,6 +95,7 @@ processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock 
             let responsePacket = runPut $ buildPacket (getMac1 rpub psk) $
                     HandshakeResponse ourindex senderIndex reply
             return $ Left (responsePacket, sock)
+processHandshakeInitiation _ _ _ _ _ _ = undefined
 
 processHandshakeResponse :: HandshakeRespSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
               -> ExceptT WireGuardError STM (Maybe (Either UdpPacket TunPacket))
@@ -112,6 +125,7 @@ processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{
             unless succeeded $ throwE OutdatedPacketError
             lift $ updateEndPoint peer sock
             return Nothing
+processHandshakeResponse _ _ _ _ _ _ = undefined
 
 genTai64n :: Time -> TAI64n
 genTai64n (CTime now) = runPut $ do
