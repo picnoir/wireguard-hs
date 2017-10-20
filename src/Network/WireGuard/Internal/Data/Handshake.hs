@@ -4,6 +4,7 @@ module Network.WireGuard.Internal.Data.Handshake (
  HandshakeRespSeed
 ) where
   
+import Control.Exception          (SomeException)
 import Crypto.Noise.DH            (KeyPair)
 import Crypto.Noise.DH.Curve25519 (Curve25519)
 import Data.Word                  (Word32)
@@ -18,4 +19,12 @@ data HandshakeInitSeed =
 type HandshakeRespSeed = EpochTime
 
 data HandshakeError = OngoingHandshake
+                    | MissingPacketTimestamp
+                    | UnexpectedIncomingPacketType String
+                    | NoiseProtocolError SomeException
+                    | PeerNotAuthorized
+                    | IsReplayAttack
+                    | PacketOutdated
+                    | CannotFindPeerIndex
+                    | ResponsePayloadShouldBeEmpty
   

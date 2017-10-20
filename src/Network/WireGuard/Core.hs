@@ -75,7 +75,6 @@ import           Network.WireGuard.Internal.Data.Types  (Time, TunPacket, UdpPac
                                                          PublicKey, TAI64n, getPeerId)
 import           Network.WireGuard.Internal.Util        (ignoreSyncExceptions, withJust,
                                                          retryWithBackoff, dropUntilM)
---import           Network.WireGuard.Internal.Stream.Handshake
 
 runCore :: Device
         -> PacketQueue (Time, TunPacket) -> PacketQueue TunPacket

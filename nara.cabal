@@ -38,8 +38,6 @@ executable nara
     Haskell2010
 
 library
---  main-is:
---    Main.hs
   exposed-modules:
     Network.WireGuard.Core,
     Network.WireGuard.Daemon,

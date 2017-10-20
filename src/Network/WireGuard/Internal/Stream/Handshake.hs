@@ -1,4 +1,17 @@
 {-# LANGUAGE RecordWildCards #-}
+
+{-|
+Module      : Network.WireGuard.Internal.Stream.Handshake
+Description : Wireguard's handshake funtion utilities.
+Copyright   : Félix Baylac-Jacqué, 2017
+License     : GPL-3
+Maintainer  : felix@alternativebit.fr
+Stability   : experimental
+Portability : POSIX
+
+This module contains the functions needed to establish a session
+between nara and a remote peer.
+|-}
 module Network.WireGuard.Internal.Stream.Handshake
 (
   handshakeInit,
@@ -28,8 +41,7 @@ import Network.WireGuard.Internal.Constant              (handshakeRetryTime, han
                                                          sessionRenewTime, timestampLength,
                                                          sessionExpireTime, mac1Length)
 import Network.WireGuard.Internal.Data.Types            (KeyPair, PresharedKey,
-                                                         Time, WireGuardError(..),
-                                                         UdpPacket, TunPacket, TAI64n,
+                                                         Time, UdpPacket, TAI64n,
                                                          PublicKey, getPeerId)
 import Network.WireGuard.Internal.Data.Handshake        (HandshakeInitSeed(..), HandshakeRespSeed,
                                                          HandshakeError(..))
@@ -44,10 +56,13 @@ import Network.WireGuard.Internal.Noise                 (newNoiseState, sendFirs
                                                          recvFirstMessageAndReply, recvSecondMessage)
 
 
+-- | Generates an hanshake initialisation packet. Assigns
+--   the initiatorWait for the remote pair and returns the
+--   content of the outgoing UDP initiation packet.
 handshakeInit :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey
-                            -> Peer -> Maybe Time
-                            -> ExceptT HandshakeError STM BS.ByteString
-handshakeInit seed device key psk peer@Peer{..} stopTime = do
+                            -> Peer -> Maybe Time -> SockAddr
+                            -> ExceptT HandshakeError STM UdpPacket
+handshakeInit seed device key psk peer@Peer{..} stopTime sock = do
     let ekey   = handshakeEphemeralKey seed
         now    = handshakeNowTS seed
         hsSeed = handshakeSeed seed
@@ -65,11 +80,19 @@ handshakeInit seed device key psk peer@Peer{..} stopTime = do
             packet = runPut . buildPacket (getMac1 remotePub psk) $
                 HandshakeInitiation index payload
         lift $ writeTVar initiatorWait (Just iwait)
-        return packet
+        return (packet, sock)
       else throwE OngoingHandshake
 
+-- | Processes an incoming hangshake  packet, writes the corresponding responderWait
+--   to the STM state and retuns the response UdpPacket.
+--
+--   Throws:
+--      - NoiseProtocolError followed by the actual noise exception.
+--      - MissingPacketTimestamp
+--      - IsReplayAttack
+--      - UnexpectedIncomingPacketType
 processHandshakeInitiation :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
-              -> ExceptT WireGuardError STM (Either UdpPacket TunPacket)
+              -> ExceptT HandshakeError STM UdpPacket
 processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock HandshakeInitiation{..} = do
     let ekey    = handshakeEphemeralKey 
         now     = handshakeNowTS 
@@ -77,14 +100,14 @@ processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock 
         state0  = newNoiseState key psk ekey Nothing ResponderRole
         outcome = recvFirstMessageAndReply state0 encryptedPayload mempty
     case outcome of
-        Left err                                   -> throwE (NoiseError err)
+        Left err                                   -> throwE $ NoiseProtocolError err
         Right (reply, decryptedPayload, rpub, sks) -> do
             when (BA.length decryptedPayload /= timestampLength) $
-                throwE $ InvalidWGPacketError "timestamp expected"
-            peer <- assertJust RemotePeerNotFoundError $
+                throwE MissingPacketTimestamp
+            peer <- assertJust PeerNotAuthorized $
                 HM.lookup (getPeerId rpub) <$> lift (readTVar peers)
             notReplayAttack <- lift $ updateTai64n peer (BA.convert decryptedPayload)
-            unless notReplayAttack $ throwE HandshakeInitiationReplayError
+            unless notReplayAttack $ throwE IsReplayAttack 
             ourindex <- do
                 ourindex <- lift $ acquireEmptyIndex device peer hsSeed
                 void $ lift $ eraseResponderWait device peer Nothing
@@ -94,20 +117,34 @@ processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock 
                 return ourindex
             let responsePacket = runPut $ buildPacket (getMac1 rpub psk) $
                     HandshakeResponse ourindex senderIndex reply
-            return $ Left (responsePacket, sock)
-processHandshakeInitiation _ _ _ _ _ _ = undefined
+            return (responsePacket, sock)
+ 
+processHandshakeInitiation _ _ _ _ _ _ = throwE $ UnexpectedIncomingPacketType
+                                          "Expecting incoming handshake initiation packet"
 
+-- | Processes an incoming handshake response packet. This function modify quite heavily the STM state, it:
+--     
+--     1- Creates a new session.
+--     2- Erases the initiatorWait structure from the STM state.
+--     3- Add the session to the STM state.
+--     4- Update the last handshake time with the remote peer in the STM state.
+--
+--   Throws:
+--     - NoiseProtocolError.
+--     - ResponsePayloadShouldBeEmpty.
+--     - PacketOutdated.
+--     - UnexpectedIncomingPacketType
 processHandshakeResponse :: HandshakeRespSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
-              -> ExceptT WireGuardError STM (Maybe (Either UdpPacket TunPacket))
+              -> ExceptT HandshakeError STM ()
 processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{..} = do
-    peer <- assertJust UnknownIndexError $
+    peer <- assertJust CannotFindPeerIndex $
         HM.lookup receiverIndex <$> lift (readTVar indexMap)
-    iwait <- assertJust OutdatedPacketError $ lift (readTVar (initiatorWait peer))
-    when (initOurIndex iwait /= receiverIndex) $ throwE OutdatedPacketError
+    iwait <- assertJust PacketOutdated $ lift (readTVar (initiatorWait peer))
+    when (initOurIndex iwait /= receiverIndex) $ throwE PacketOutdated 
     let state1 = initNoise iwait
         outcome = recvSecondMessage state1 encryptedPayload
     case outcome of
-        Left err                      -> throwE (NoiseError err)
+        Left err                      -> throwE (NoiseProtocolError err)
         Right (decryptedPayload, sks) -> do
             newCounter <- lift $ newTVar 0
             let newsession = Session receiverIndex senderIndex sks
@@ -115,17 +152,18 @@ processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{
                     (addTime now sessionExpireTime)
                     newCounter
             when (BA.length decryptedPayload /= 0) $
-                throwE $ InvalidWGPacketError "empty payload expected"
+                throwE ResponsePayloadShouldBeEmpty
             succeeded <- lift $ do
                 erased <- eraseInitiatorWait device peer (Just receiverIndex)
                 when erased $ do
                     addSession device peer newsession
                     writeTVar (lastHandshakeTime peer) (Just now)
                 return erased
-            unless succeeded $ throwE OutdatedPacketError
+            unless succeeded $ throwE PacketOutdated
             lift $ updateEndPoint peer sock
-            return Nothing
-processHandshakeResponse _ _ _ _ _ _ = undefined
+
+processHandshakeResponse _ _ _ _ _ _ = throwE $ UnexpectedIncomingPacketType
+                                        "Expecting incoming handshake response packet"
 
 genTai64n :: Time -> TAI64n
 genTai64n (CTime now) = runPut $ do
