@@ -50,6 +50,7 @@ library
     Network.WireGuard.Internal.Data.Types,
     Network.WireGuard.Internal.Data.RpcTypes,
     Network.WireGuard.Internal.Data.Handshake,
+    Network.WireGuard.Internal.Data.QueueSystem,
     Network.WireGuard.Internal.Stream.Handshake,
     Network.WireGuard.Internal.Constant
     Network.WireGuard.Internal.IPPacket

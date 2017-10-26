@@ -2,27 +2,27 @@ module Network.WireGuard.Daemon
   ( runDaemon
   ) where
 
-import           Control.Concurrent.Async               (async, cancel)
-import           Control.Concurrent.STM                 (atomically)
-import           Control.Monad                          (void)
-import           GHC.Conc.IO                            (closeFdWith)
-import           System.Directory                       (removeFile)
-import           System.Posix.IO                        (closeFd)
-import           System.Posix.Types                     (Fd)
+import           Control.Concurrent.Async                    (async, cancel)
+import           Control.Concurrent.STM                      (atomically)
+import           Control.Monad                               (void)
+import           GHC.Conc.IO                                 (closeFdWith)
+import           System.Directory                            (removeFile)
+import           System.Posix.IO                             (closeFd)
+import           System.Posix.Types                          (Fd)
 
-import           Control.Concurrent.MVar                (newEmptyMVar, putMVar,
-                                                         takeMVar)
-import           System.Posix.Signals                   (installHandler, sigTERM,
-                                                         Handler(Catch), sigINT)
+import           Control.Concurrent.MVar                     (newEmptyMVar, putMVar,
+                                                              takeMVar)
+import           System.Posix.Signals                        (installHandler, sigTERM,
+                                                              Handler(Catch), sigINT)
 
-import           Network.WireGuard.Core                 (runCore)
-import           Network.WireGuard.Internal.State       (createDevice)
-import           Network.WireGuard.RPC                  (runRPC)
-import           Network.WireGuard.TunListener          (runTunListener)
-import           Network.WireGuard.UdpListener          (runUdpListener)
-
-import           Network.WireGuard.Internal.PacketQueue (newPacketQueue)
-import           Network.WireGuard.Internal.Util        (catchIOExceptionAnd)
+import           Network.WireGuard.Core                      (runCore)
+import           Network.WireGuard.Internal.State            (createDevice)
+import           Network.WireGuard.RPC                       (runRPC)
+import           Network.WireGuard.TunListener               (runTunListener)
+import           Network.WireGuard.UdpListener               (runUdpListener)
+import           Network.WireGuard.Internal.Data.QueueSystem (DeviceQueues(..))
+import           Network.WireGuard.Internal.PacketQueue      (newPacketQueue)
+import           Network.WireGuard.Internal.Util             (catchIOExceptionAnd)
 
 runDaemon :: String -> FilePath -> [Fd] -> IO ()
 runDaemon intfName sockPath tunFds = do
@@ -32,14 +32,15 @@ runDaemon intfName sockPath tunFds = do
 
     readTunChan <- newPacketQueue
     writeTunChan <- newPacketQueue
+    readUdpChan <- newPacketQueue
+    writeUdpChan <- newPacketQueue
+    let devQueues = DeviceQueues readUdpChan writeUdpChan readTunChan writeTunChan
     tunListenerThread <- async $ runTunListener tunFds readTunChan writeTunChan
 
     -- TODO: Support per-host packet queue
-    readUdpChan <- newPacketQueue
-    writeUdpChan <- newPacketQueue
     udpListenerThread <- async $ runUdpListener device readUdpChan writeUdpChan
 
-    coreThread <- async $ runCore device readTunChan writeTunChan readUdpChan writeUdpChan
+    coreThread <- async $ runCore device devQueues
 
     died <- newEmptyMVar
 
