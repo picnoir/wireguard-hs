@@ -35,10 +35,8 @@ runDaemon intfName sockPath tunFds = do
     readUdpChan <- newPacketQueue
     writeUdpChan <- newPacketQueue
     let devQueues = DeviceQueues readUdpChan writeUdpChan readTunChan writeTunChan
-    tunListenerThread <- async $ runTunListener tunFds readTunChan writeTunChan
-
-    -- TODO: Support per-host packet queue
-    udpListenerThread <- async $ runUdpListener device readUdpChan writeUdpChan
+    tunListenerThread <- async $ runTunListener tunFds (readTunQueue devQueues) $ writeTunQueue devQueues
+    udpListenerThread <- async $ runUdpListener device (readUdpQueue devQueues) $ writeUdpQueue devQueues
 
     coreThread <- async $ runCore device devQueues
 

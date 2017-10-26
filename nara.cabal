@@ -47,11 +47,13 @@ library
     Network.WireGuard.Internal.PacketQueue,
     Network.WireGuard.Internal.RpcParsers,
     Network.WireGuard.Internal.State,
+    Network.WireGuard.Internal.Data.Peer,
     Network.WireGuard.Internal.Data.Types,
     Network.WireGuard.Internal.Data.RpcTypes,
     Network.WireGuard.Internal.Data.Handshake,
     Network.WireGuard.Internal.Data.QueueSystem,
     Network.WireGuard.Internal.Stream.Handshake,
+    Network.WireGuard.Internal.Stream.Peer,
     Network.WireGuard.Internal.Constant
     Network.WireGuard.Internal.IPPacket
     Network.WireGuard.Internal.Noise

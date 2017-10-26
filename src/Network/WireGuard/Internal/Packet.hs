@@ -4,11 +4,16 @@ module Network.WireGuard.Internal.Packet
   ( Packet(..)
   , parsePacket
   , buildPacket
+  , getMac1
   ) where
 
 import           Control.Monad                             (replicateM_, unless, when)
+import           Crypto.Noise.DH                           (dhPubToBytes)
+import qualified Data.ByteArray                      as BA (convert)
 import qualified Data.ByteString                     as BS (ByteString)
 import           Foreign.Storable                          (sizeOf)
+import           Crypto.Hash.BLAKE2.BLAKE2s                (finalize, update, initialize,
+                                                            initialize')
 import           Data.Serialize                            (Get, Putter,
                                                             Put, lookAhead,
                                                             skip, getWord8,
@@ -22,7 +27,8 @@ import           Network.WireGuard.Internal.Constant       (keyLength, aeadLengt
                                                             timestampLength, mac1Length,
                                                             mac2Length, authLength)
 import           Network.WireGuard.Internal.Data.Types     (Index, EncryptedPayload,
-                                                            Counter, AuthTag)
+                                                            Counter, AuthTag, PublicKey,
+                                                            PresharedKey)
 
 data Packet = HandshakeInitiation
               { senderIndex      :: !Index
@@ -41,12 +47,19 @@ data Packet = HandshakeInitiation
               }
     deriving (Show)
 
+getMac1 :: PublicKey -> Maybe PresharedKey -> BS.ByteString -> BS.ByteString
+getMac1 pub mpsk payload =
+    finalize mac1Length $ update payload $ update (BA.convert (dhPubToBytes pub)) $
+        case mpsk of
+            Nothing  -> initialize mac1Length
+            Just psk -> initialize' mac1Length (BA.convert psk)
+
 parsePacket :: (BS.ByteString -> BS.ByteString) -> Get Packet
-parsePacket getMac1 = do
+parsePacket mac1 = do
     packetType <- lookAhead getWord8
     case packetType of
-        1 -> verifyLength (==handshakeInitiationPacketLength) $ verifyMac getMac1 parseHandshakeInitiation
-        2 -> verifyLength (==handshakeResponsePacketLength) $ verifyMac getMac1 parseHandshakeResponse
+        1 -> verifyLength (==handshakeInitiationPacketLength) $ verifyMac mac1 parseHandshakeInitiation
+        2 -> verifyLength (==handshakeResponsePacketLength) $ verifyMac mac1 parseHandshakeResponse
         4 -> verifyLength (>=packetDataMinimumPacketLength) parsePacketData
         _ -> fail "unknown packet"
   where
@@ -74,13 +87,13 @@ parsePacketData = do
         (remaining >>= getBytes . subtract authLength) <*> getBytes authLength
 
 buildPacket :: (BS.ByteString -> BS.ByteString) -> Putter Packet
-buildPacket getMac1 HandshakeInitiation{..} = appendMac getMac1 $ do
+buildPacket mac1 HandshakeInitiation{..} = appendMac mac1 $ do
     putWord8 1
     replicateM_ 3 (putWord8 0)
     putWord32le senderIndex
     putByteString encryptedPayload
 
-buildPacket getMac1 HandshakeResponse{..} = appendMac getMac1 $ do
+buildPacket mac1 HandshakeResponse{..} = appendMac mac1 $ do
     putWord8 2
     replicateM_ 3 (putWord8 0)
     putWord32le senderIndex
@@ -102,10 +115,10 @@ verifyLength check ga = do
     ga
 
 verifyMac :: (BS.ByteString -> BS.ByteString) -> Get Packet -> Get Packet
-verifyMac getMac1 ga = do
+verifyMac mac1 ga = do
     bodyLength <- subtract (mac1Length + mac2Length) <$> remaining
     when (bodyLength < 0) $ fail "packet too small"
-    expectedMac1 <- getMac1 <$> lookAhead (getBytes bodyLength)
+    expectedMac1 <- mac1 <$> lookAhead (getBytes bodyLength)
     parsed <- isolate bodyLength ga
     receivedMac1 <- getBytes mac1Length
     when (expectedMac1 /= receivedMac1) $ fail "wrong mac1"
@@ -113,9 +126,9 @@ verifyMac getMac1 ga = do
     return parsed
 
 appendMac :: (BS.ByteString -> BS.ByteString) -> Put -> Put
-appendMac getMac1 p = do
+appendMac mac1 p = do
     -- TODO: find a smart approach to avoid extra ByteString allocation
     let bs = runPut p
     putByteString bs
-    putByteString (getMac1 bs)
+    putByteString (mac1 bs)
     replicateM_ mac2Length (putWord8 0)

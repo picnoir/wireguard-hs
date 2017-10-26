@@ -1,12 +1,23 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections   #-}
 
+{-|
+Module      : Network.WireGuard.Internal.State.
+Description : STM state shared across the different threads.
+License     : GPL-3
+Maintainer  : felix@alternativebit.fr
+Stability   : experimental
+Portability : POSIX
+
+STM state shared across the different threads.
+-}
+
 module Network.WireGuard.Internal.State
   ( PeerId
   , Device(..)
   , Peer(..)
-  , InitiatorWait(..)
-  , ResponderWait(..)
+  , HandshakeInit(..)
+  , HandshakeResp(..)
   , Session(..)
   , createDevice
   , createPeer
@@ -50,60 +61,107 @@ import           Network.WireGuard.Internal.Data.Types (KeyPair, PresharedKey, P
                                                         Index, PublicKey, Time,
                                                         TAI64n, SessionKey, Counter,
                                                         farFuture)
+import           Network.WireGuard.Internal.Data.Peer  (PeerStreamAsyncs)
+import           Network.WireGuard.Internal.Data.QueueSystem (PeerQueues)
 
+-- | STM data structure storing device-related informations.
 data Device = Device
-            { intfName     :: String
-            , localKey     :: TVar (Maybe KeyPair)
-            , presharedKey :: TVar (Maybe PresharedKey)
-            , fwmark       :: TVar Word
-            , port         :: TVar Int
-            , peers        :: TVar (HM.HashMap PeerId Peer)
-            , routeTable4  :: TVar (RT.IPRTable IPv4 Peer)
-            , routeTable6  :: TVar (RT.IPRTable IPv6 Peer)
-            , indexMap     :: TVar (HM.HashMap Index Peer)
+            { -- | Interface name (EG. wg0)
+              intfName     :: String,
+              -- | Local static key. 32 bits Curve25519 key couple.
+              localKey     :: TVar (Maybe KeyPair),
+              -- | TODO: refactor this key to the peer datastructure.
+              presharedKey :: TVar (Maybe PresharedKey),
+              -- | Firewall mark.
+              fwmark       :: TVar Word,
+              -- | Listening UDP port.
+              port         :: TVar Int,
+              -- | Remote known hosts 32 bits Curve25519 public keys.
+              peers        :: TVar (HM.HashMap PeerId Peer),
+              -- | IPV4 routing table.
+              routeTable4  :: TVar (RT.IPRTable IPv4 Peer),
+              -- | IPV6 routing table.
+              routeTable6  :: TVar (RT.IPRTable IPv6 Peer),
+              -- | Local index/peer associative table.
+              indexMap     :: TVar (HM.HashMap Index Peer)
             }
-
+             
+-- | Remote peer STM data structure.
 data Peer = Peer
-          { remotePub         :: !PublicKey
-          , ipmasks           :: TVar [IPRange]
-          , endPoint          :: TVar (Maybe SockAddr)
-          , lastHandshakeTime :: TVar (Maybe Time)
-          , receivedBytes     :: TVar Word64
-          , transferredBytes  :: TVar Word64
-          , keepaliveInterval :: TVar Int
-          , initiatorWait     :: TVar (Maybe InitiatorWait)
-          , responderWait     :: TVar (Maybe ResponderWait)
-          , sessions          :: TVar [Session]  -- last two active sessions
-          , lastTai64n        :: TVar TAI64n
-          , lastReceiveTime   :: TVar Time
-          , lastTransferTime  :: TVar Time
-          , lastKeepaliveTime :: TVar Time
+          { -- | Peer's  32 bits Curve 25519 public key. 
+            remotePub         :: !PublicKey,
+            -- | Peer's asynchronous processes listening to various
+            -- internal queues.
+            asyncs            :: TVar (Maybe PeerStreamAsyncs),
+            -- | Queues associated with this peer.
+            queues            :: TVar (Maybe PeerQueues),
+            -- | Authorized origin IP ranges for this peer.
+            ipmasks           :: TVar [IPRange],
+            -- | Last known remote address.
+            endPoint          :: TVar (Maybe SockAddr),
+            lastHandshakeTime :: TVar (Maybe Time),
+            receivedBytes     :: TVar Word64,
+            transferredBytes  :: TVar Word64,
+            keepaliveInterval :: TVar Int,
+            -- | Handshake initiation state.
+            initiatorWait     :: TVar (Maybe HandshakeInit),
+            -- | Handshake response state.
+            responderWait     :: TVar (Maybe HandshakeResp),
+            -- | Last two active sessions
+            sessions          :: TVar [Session],
+            -- | Last init handshake time. Used to prevent replay attacks.
+            lastTai64n        :: TVar TAI64n,
+            lastReceiveTime   :: TVar Time,
+            lastTransferTime  :: TVar Time,
+            lastKeepaliveTime :: TVar Time
           }
 
-data InitiatorWait = InitiatorWait
-                   { initOurIndex  :: !Index
-                   , initRetryTime :: !Time
-                   , initStopTime  :: !Time
-                   , initNoise     :: !(NoiseState ChaChaPoly1305 Curve25519 BLAKE2s)
+-- | Handshake initiation state.
+data HandshakeInit = HandshakeInit
+                   { -- | Our index. 32 bits locally randomly generated integer. This integer 
+                     --   will be used to identify the remote peer. Analogous to IPsec's "SPI".
+                     initOurIndex         :: !Index,
+                     -- | Time after which the initial handshake message should be replayed.
+                     initRekeyTimeout     :: !Time,
+                     -- | Time after which the handshake should be aborded.
+                     initRekeyAttemptTime :: !Time,
+                     -- | Noise state.
+                     initNoise            :: !(NoiseState ChaChaPoly1305 Curve25519 BLAKE2s)
                    }
 
-data ResponderWait = ResponderWait
-                   { respOurIndex   :: !Index
-                   , respTheirIndex :: !Index
-                   , respStopTime   :: !Time
-                   , respSessionKey :: !SessionKey
+-- | Handshake response local state.
+data HandshakeResp = HandshakeResp
+                   { -- | Our index. 32 bits locally randomly generated integer. This integer 
+                     --   will be used to identify the remote peer. Analogous to IPsec's "SPI".
+                     respOurIndex   :: !Index,
+                     -- | Remote peer index, we use this index to indentify ourselves when sending a message to the remote peer.
+                     respTheirIndex :: !Index,
+                     -- | Time after wich the session should be renewed.
+                     respStopTime   :: !Time,
+                     -- | Generated ephemeral session key.
+                     respSessionKey :: !SessionKey
                    }
 
+-- | Wireguard session related data
 data Session = Session
-             { ourIndex       :: !Index
-             , theirIndex     :: !Index
-             , sessionKey     :: !SessionKey
-             , renewTime      :: !Time
-             , expireTime     :: !Time
-             , sessionCounter :: TVar Counter
+             { -- | 32 bits integer by which the remote peer indexes us.
+               --   This index has been generated by the remote peer.
+               ourIndex       :: !Index,
+               -- | 32 bit integer locally generated indexing the remote peer.
+               theirIndex     :: !Index,
+               -- | 32 bit integer locally generated indexing the remote peer.
+               sessionKey     :: !SessionKey,
+               -- | Passed that time, we need to generate a new session with the remote peer.
+               renewTime      :: !Time,
+               -- | Passed that time, we will reject any incoming packet from that host.
+               expireTime     :: !Time,
+               -- | Nonce counter.
+               sessionCounter :: TVar Counter
              -- TODO: avoid nonce reuse from remote peer
              }
 
+-- | Creates a new device with its associated empty STM
+-- shared variables.
 createDevice :: String -> STM Device
 createDevice intf = Device intf <$> newTVar Nothing
                                 <*> newTVar Nothing
@@ -114,8 +172,12 @@ createDevice intf = Device intf <$> newTVar Nothing
                                 <*> newTVar RT.empty
                                 <*> newTVar HM.empty
 
+-- | Creates a new Peer with its associated empty STM
+-- shared variables.
 createPeer :: PublicKey -> STM Peer
-createPeer rpub = Peer rpub <$> newTVar []
+createPeer rpub = Peer rpub <$> newTVar Nothing
+                            <*> newTVar Nothing
+                            <*> newTVar []
                             <*> newTVar Nothing
                             <*> newTVar Nothing
                             <*> newTVar 0
@@ -213,7 +275,7 @@ waitForSession timelimit peer = do
                   else retry
             (s:_) -> return (Just s)
 
-findSession :: Peer -> Index -> STM (Maybe (Either ResponderWait Session))
+findSession :: Peer -> Index -> STM (Maybe (Either HandshakeResp Session))
 findSession peer index = do
     sessions' <- filter ((==index).ourIndex) <$> readTVar (sessions peer)
     case sessions' of

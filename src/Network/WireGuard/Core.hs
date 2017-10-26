@@ -14,10 +14,8 @@ import           Control.Monad.STM                           (atomically)
 import           Control.Monad.Trans.Except                  (ExceptT, runExceptT,
                                                               throwE)
 import           Crypto.Noise                                (HandshakeRole(ResponderRole, InitiatorRole))
-import           Crypto.Noise.DH                             (dhGenKey, dhPubEq,
-                                                              dhPubToBytes)
+import           Crypto.Noise.DH                             (dhGenKey, dhPubEq)
 import qualified Data.ByteArray                              as BA (length, convert)
-import qualified Data.ByteString                             as BS (ByteString)
 import qualified Data.HashMap.Strict                         as HM (lookup)
 import           Data.IP                                     (makeAddrRange)
 import qualified Data.IP.RouteTable                          as RT (lookup)
@@ -34,13 +32,11 @@ import           System.Random                               (randomIO)
 
 import           Control.Concurrent.STM.TVar                 (readTVarIO, modifyTVar',
                                                               writeTVar, newTVar, readTVar)
-import           Crypto.Hash.BLAKE2.BLAKE2s                  (finalize, update, initialize,
-                                                              initialize')
 
 import           Network.WireGuard.Internal.Constant         (heartbeatWaitTime, handshakeRetryTime,
                                                               timestampLength, handshakeStopTime,
                                                               sessionRenewTime, sessionExpireTime,
-                                                              sessionKeepaliveTime, mac1Length)
+                                                              sessionKeepaliveTime)
 import           Network.WireGuard.Internal.IPPacket         (IPPacket(InvalidIPPacket), 
                                                               IPPacket(IPv4Packet, IPv6Packet),
                                                               parseIPPacket)
@@ -50,10 +46,10 @@ import           Network.WireGuard.Internal.Noise            (encryptMessage, ne
 import           Network.WireGuard.Internal.Packet           (Packet(HandshakeInitiation, HandshakeResponse),
                                                               Packet(PacketData), buildPacket, parsePacket,
                                                               encryptedPayload, senderIndex, receiverIndex,
-                                                              counter, authTag)
+                                                              counter, authTag, getMac1)
 import           Network.WireGuard.Internal.PacketQueue      (PacketQueue, popPacketQueue,
                                                               pushPacketQueue)
-import           Network.WireGuard.Internal.State            (Device(Device), ResponderWait(ResponderWait),
+import           Network.WireGuard.Internal.State            (Device(Device), HandshakeResp(HandshakeResp),
                                                               Peer(Peer), localKey, presharedKey,
                                                               routeTable4, routeTable6, getSession,
                                                               endPoint, waitForSession, nextNonce,
@@ -67,21 +63,21 @@ import           Network.WireGuard.Internal.State            (Device(Device), Re
                                                               findSession, respOurIndex, respTheirIndex,
                                                               respSessionKey, remotePub, remotePub,
                                                               lastReceiveTime, receivedBytes, lastKeepaliveTime,
-                                                              initStopTime, initRetryTime, respStopTime,
+                                                              initRekeyAttemptTime, initRekeyTimeout, respStopTime,
                                                               filterSessions, expireTime, 
-                                                              InitiatorWait(InitiatorWait))
+                                                              HandshakeInit(HandshakeInit))
 import           Network.WireGuard.Internal.Data.Types       (Time, TunPacket, UdpPacket,
                                                               WireGuardError(..), KeyPair, PresharedKey,
-                                                              PublicKey, TAI64n, getPeerId)
+                                                              TAI64n, getPeerId)
 import           Network.WireGuard.Internal.Data.QueueSystem (DeviceQueues(..))
 import           Network.WireGuard.Internal.Util             (ignoreSyncExceptions, withJust,
                                                               retryWithBackoff, dropUntilM)
-import           Network.WireGuard.Internal.Stream.Handshake (handshakeInit, processHandshakeInitiation,
-                                                              processHandshakeResponse)
+import           Network.WireGuard.Internal.Stream.Peer      (spawnDevicePeerProcesses)
 
 runCore :: Device -> DeviceQueues -> IO ()
 runCore device devQueues = do
     threads <- getNumCapabilities
+    spawnDevicePeerProcesses device $ writeUdpQueue devQueues
     loop threads []
   where
     heartbeatLoop = forever $ ignoreSyncExceptions $ do
@@ -100,7 +96,7 @@ runCore device devQueues = do
             loop (x-1) (rhs:rt:ru:asyncs)
 
 handleHandshakeInit :: Device -> PacketQueue UdpPacket -> IO ()
-handleHandshakeInit dev readHandshakeQueue = undefined
+handleHandshakeInit _ _ = undefined
 
 handleReadTun :: Device -> PacketQueue (Time, TunPacket) -> PacketQueue UdpPacket -> IO ()
 handleReadTun device readTunChan writeUdpChan = forever $ do
@@ -186,7 +182,7 @@ processPacket device@Device{..} key psk sock HandshakeInitiation{..} = do
             ourindex <- liftIO $ atomically $ do
                 ourindex <- acquireEmptyIndex device peer seed
                 void $ eraseResponderWait device peer Nothing
-                let rwait = ResponderWait ourindex senderIndex
+                let rwait = HandshakeResp ourindex senderIndex
                         (addTime now handshakeStopTime) sks
                 writeTVar (responderWait peer) (Just rwait)
                 return ourindex
@@ -230,7 +226,7 @@ processPacket device@Device{..} _key _psk sock PacketData{..} = do
     (isFromResponderWait, session) <- case outcome of
         Nothing                       -> throwE OutdatedPacketError
         Just (Right session)          -> return (False, session)
-        Just (Left ResponderWait{..}) -> do
+        Just (Left HandshakeResp{..}) -> do
             newCounter <- liftIO $ atomically $ newTVar 0
             let newsession = Session respOurIndex respTheirIndex respSessionKey
                     (addTime now (sessionRenewTime + 2 * handshakeRetryTime))
@@ -274,12 +270,12 @@ runHeartbeat device key chan = do
         reinitiate <- atomically $ do
             miwait <- readTVar (initiatorWait peer)
             case miwait of
-                Just iwait | now >= initStopTime iwait -> do
+                Just iwait | now >= initRekeyAttemptTime iwait -> do
                     void $ eraseInitiatorWait device peer Nothing
                     return Nothing
-                Just iwait | now >= initRetryTime iwait -> do
+                Just iwait | now >= initRekeyTimeout iwait -> do
                     void $ eraseInitiatorWait device peer Nothing
-                    return (Just (initStopTime iwait))
+                    return (Just (initRekeyAttemptTime iwait))
                 _ -> return Nothing
         when (isJust reinitiate) $ withJust (readTVarIO (endPoint peer)) $ \endp ->
             void $ tryInitiateHandshakeIfEmpty device key psk chan peer endp reinitiate
@@ -309,7 +305,7 @@ checkAndTryInitiateHandshake :: Device -> KeyPair -> Maybe PresharedKey
                              -> PacketQueue UdpPacket -> Peer -> SockAddr -> Time
                              -> IO Bool
 checkAndTryInitiateHandshake device key psk chan peer@Peer{..} endp now = do
-    initiated <- readAndVerifyStopTime initStopTime initiatorWait (eraseInitiatorWait device peer Nothing)
+    initiated <- readAndVerifyStopTime initRekeyAttemptTime initiatorWait (eraseInitiatorWait device peer Nothing)
     responded <- readAndVerifyStopTime respStopTime responderWait (eraseResponderWait device peer Nothing)
     if initiated || responded
       then return False
@@ -338,7 +334,7 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
         if isEmpty
           then do
             index <- acquireEmptyIndex device peer seed
-            let iwait = InitiatorWait index
+            let iwait = HandshakeInit index
                     (addTime now handshakeRetryTime)
                     (fromMaybe (addTime now handshakeStopTime) stopTime)
                     state1
@@ -352,12 +348,6 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
         Nothing     -> return False
 
 
-getMac1 :: PublicKey -> Maybe PresharedKey -> BS.ByteString -> BS.ByteString
-getMac1 pub mpsk payload =
-    finalize mac1Length $ update payload $ update (BA.convert (dhPubToBytes pub)) $
-        case mpsk of
-            Nothing  -> initialize mac1Length
-            Just psk -> initialize' mac1Length (BA.convert psk)
 
 assertJust :: Monad m => e -> ExceptT e m (Maybe a) -> ExceptT e m a
 assertJust err ma = do
