@@ -46,9 +46,9 @@ import Network.WireGuard.Internal.Data.Types            (KeyPair, PresharedKey,
 import Network.WireGuard.Internal.Data.Handshake        (HandshakeInitSeed(..), HandshakeRespSeed,
                                                          HandshakeError(..))
 import Network.WireGuard.Internal.State                 (Device(..), Peer(..),
-                                                         acquireEmptyIndex, InitiatorWait(..),
+                                                         acquireEmptyIndex, HandshakeInit(..),
                                                          updateTai64n, eraseResponderWait,
-                                                         ResponderWait(..), Session(..),
+                                                         HandshakeResp(..), Session(..),
                                                          eraseInitiatorWait, addSession,
                                                          updateEndPoint)
 import Network.WireGuard.Internal.Packet                (Packet(..), buildPacket)
@@ -73,7 +73,7 @@ handshakeInit seed device key psk peer@Peer{..} stopTime sock = do
     if isEmpty
       then do
         index <- lift $ acquireEmptyIndex device peer hsSeed
-        let iwait = InitiatorWait index
+        let iwait = HandshakeInit index
                 (addTime now handshakeRetryTime)
                 (fromMaybe (addTime now handshakeStopTime) stopTime)
                 state1
@@ -93,7 +93,7 @@ handshakeInit seed device key psk peer@Peer{..} stopTime sock = do
 --      - UnexpectedIncomingPacketType
 processHandshakeInitiation :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
               -> ExceptT HandshakeError STM UdpPacket
-processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock HandshakeInitiation{..} = do
+processHandshakeInitiation HandshakeInitSeed{..} device@Device{..} key psk sock HandshakeInitiation{..} = do
     let ekey    = handshakeEphemeralKey 
         now     = handshakeNowTS 
         hsSeed  = handshakeSeed 
@@ -111,7 +111,7 @@ processHandshakeInitiation InitHandshakeSeed{..} device@Device{..} key psk sock 
             ourindex <- do
                 ourindex <- lift $ acquireEmptyIndex device peer hsSeed
                 void $ lift $ eraseResponderWait device peer Nothing
-                let rwait = ResponderWait ourindex senderIndex
+                let rwait = HandshakeResp ourindex senderIndex
                         (addTime now handshakeStopTime) sks
                 lift $ writeTVar (responderWait peer) (Just rwait)
                 return ourindex
