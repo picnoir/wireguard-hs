@@ -12,7 +12,9 @@ and cookie-related operations.
 -}
 
 module Network.WireGuard.Internal.Data.Peer (
-  PeerStreamAsyncs(..)
+  PeerStreamAsyncs(..),
+  DecryptPacketError(..),
+  ValidatePacketError(..)
 ) where
 
 import Control.Concurrent.Async (Async)
@@ -20,6 +22,17 @@ import Control.Concurrent.Async (Async)
 -- | Data type aggregating all peer's attached asyncs.
 data PeerStreamAsyncs = PeerStreamAsyncs {
   decryptPeerAsync   :: Async (),
+  encryptPeerAsync   :: Async (),
   handshakePeerAsync :: Async (),
   cookiePeerAsync    :: Async ()
 }
+
+data DecryptPacketError = UnknownPeerIndex
+                        | MissingSession
+                        | UnexpectedIncomingPacket
+                        | DecryptError
+                        deriving (Show, Eq)
+
+data ValidatePacketError = SourceAddrBlocked
+                         | InvalidDecryptedIPPacket
+                         deriving (Show, Eq)

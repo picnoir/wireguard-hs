@@ -49,7 +49,8 @@ import           Network.WireGuard.Internal.Data.Types     (PrivateKey, PublicKe
 import           Network.WireGuard.Internal.Data.RpcTypes  (RpcRequest(..), RpcSetPayload(..),
                                                             OpType(..), RpcDevicePayload(..),
                                                             RpcPeerPayload(..))
-import           Network.WireGuard.Internal.Util           (catchIOExceptionAnd)
+import           Network.WireGuard.Internal.Util           (catchIOExceptionAnd, tryReadTMVar,
+                                                            writeMaybeTMVar)
 
 --TODO: return appropriate errno during set operations.
 
@@ -84,7 +85,7 @@ showDevice :: Device -> STM BS.ByteString
 showDevice Device{..} = do
   listen_port   <- BC.pack . show <$> readTVar port
   fwm           <- BC.pack . show <$> readTVar fwmark
-  private_key   <- fmap (toLowerBs . hex . privToBytes . fst) <$> readTVar localKey
+  private_key   <- fmap (toLowerBs . hex . privToBytes . fst) <$> tryReadTMVar localKey
   let devHm     = [("private_key", private_key),
                    ("listen_port", Just listen_port),
                    ("fwmark", Just fwm)]
@@ -99,7 +100,7 @@ showDevice Device{..} = do
 showPeer :: Peer -> STM BS.ByteString
 showPeer Peer{..} = do
   let public_key                =  pubToString remotePub
-  endpoint                      <- readTVar endPoint
+  endpoint                      <- tryReadTMVar endPoint
   persistant_keepalive_interval <- readTVar keepaliveInterval
   allowed_ip                    <- readTVar ipmasks
   rx_bytes                      <- readTVar receivedBytes
@@ -119,7 +120,7 @@ showPeer Peer{..} = do
 setDevice :: RpcRequest -> Device -> STM (Maybe BS.ByteString)
 setDevice req dev = do
   let devReq = devicePayload . fromJust $ payload req
-  when (isJust $ pk devReq) . writeTVar (localKey dev) $ pk devReq
+  when (isJust $ pk devReq) . writeMaybeTMVar (localKey dev) $ pk devReq
   writeTVar (port dev) $ listenPort devReq
   when (isJust $ fwMark devReq) . writeTVar (fwmark dev) . fromJust $ fwMark devReq
   when (replacePeers devReq) $ delDevPeers dev
@@ -150,7 +151,7 @@ modifySTMPeer peer stmPeer = do
   stmPIps <- if replaceIps peer
               then return []
               else readTVar $ ipmasks stmPeer
-  writeTVar (endPoint stmPeer) . Just $ endpoint peer
+  writeMaybeTMVar (endPoint stmPeer) . Just $ endpoint peer
   writeTVar (keepaliveInterval stmPeer) $ persistantKeepaliveInterval peer
   writeTVar (ipmasks stmPeer) $ stmPIps ++ allowedIp peer
   

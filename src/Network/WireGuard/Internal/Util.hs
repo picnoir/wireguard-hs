@@ -10,18 +10,26 @@ module Network.WireGuard.Internal.Util
   , dropUntilM
   , zeroMemory
   , copyMemory
+  , assertJust
+  , tryReadTMVar
+  , writeMaybeTMVar
   ) where
 
 import           Control.Concurrent                  (threadDelay)
+import           Control.Monad                       (void)
 import           Control.Exception                   (Exception (..),
                                                       IOException,
                                                       SomeAsyncException,
                                                       SomeException, throwIO)
 import           Control.Monad.Catch                 (MonadCatch (..))
+import           Control.Monad.Trans.Except          (ExceptT, throwE)
 import           Data.Foldable                       (forM_)
 import           System.IO                           (hPutStrLn, stderr)
 import           Foreign                             (Ptr)
 import           Foreign.C                           (CSize(..), CInt(..))
+import           Control.Concurrent.STM              (STM, TMVar, isEmptyTMVar,
+                                                      tryTakeTMVar, swapTMVar,
+                                                      putTMVar)
 
 import           Network.WireGuard.Internal.Constant (retryMaxWaitTime)
 
@@ -65,6 +73,30 @@ zeroMemory dest nbytes = memset dest 0 (fromIntegral nbytes)
 
 copyMemory :: Ptr a -> Ptr b -> CSize -> IO ()
 copyMemory = memcpy 
+
+assertJust :: Monad m => e -> ExceptT e m (Maybe a) -> ExceptT e m a
+assertJust err ma = do
+    res <- ma
+    case res of
+        Just a  -> return a
+        Nothing -> throwE err
+
+tryReadTMVar :: TMVar a -> STM (Maybe a)
+tryReadTMVar tv = do
+    v <- tryTakeTMVar tv
+    resetTMVar v tv
+    return v
+    where
+        resetTMVar (Just var) stv = putTMVar stv var
+        resetTMVar _ _ = return ()
+
+writeMaybeTMVar :: TMVar a -> Maybe a -> STM ()
+writeMaybeTMVar tv (Just v) = do
+                                isEmpty <- isEmptyTMVar tv
+                                if isEmpty
+                                  then putTMVar  tv v
+                                  else void $ swapTMVar tv v
+writeMaybeTMVar tv Nothing = void $ tryTakeTMVar tv 
 
 foreign import ccall unsafe "string.h" memset :: Ptr a -> CInt -> CSize -> IO ()
 foreign import ccall unsafe "string.h" memcpy :: Ptr a -> Ptr b -> CSize -> IO ()

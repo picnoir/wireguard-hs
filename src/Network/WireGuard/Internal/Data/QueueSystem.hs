@@ -31,7 +31,8 @@ data DeviceQueues = DeviceQueues {
 -- | Queues attached to a wireguard peer.
 data PeerQueues = PeerQueues {
   readHandshakeQueue  :: PacketQueue Packet,
-  decryptQueue        :: PacketQueue UdpPacket
+  decryptQueue        :: PacketQueue UdpPacket,
+  encryptQueue        :: PacketQueue TunPacket
 } deriving (Eq)
 
 -- | Helper function instantiating a peer's queues.
@@ -39,4 +40,5 @@ createPeerQueues :: IO PeerQueues
 createPeerQueues = do
   readHs  <- newPacketQueue 
   decrypt <- newPacketQueue
-  return $ PeerQueues readHs decrypt
+  encrypt <- newPacketQueue
+  return $ PeerQueues readHs decrypt encrypt

@@ -46,5 +46,6 @@ data HandshakeError = OngoingHandshake
                     | PacketOutdated
                     | CannotFindPeerIndex
                     | ResponsePayloadShouldBeEmpty
+                    | MissingLocalKeyPair
                     deriving (Show)
   

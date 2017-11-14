@@ -26,8 +26,8 @@ module Network.WireGuard.Internal.State
   , acquireEmptyIndex
   , removeIndex
   , nextNonce
-  , eraseInitiatorWait
-  , eraseResponderWait
+  , eraseHandshakeInit 
+  , eraseHandshakeResp
   , getSession
   , waitForSession
   , findSession
@@ -35,6 +35,7 @@ module Network.WireGuard.Internal.State
   , filterSessions
   , updateTai64n
   , updateEndPoint
+  , appendNewSessionToState
   ) where
 
 import           Control.Monad                       (forM, when)
@@ -50,11 +51,11 @@ import           Data.Maybe                          (catMaybes, fromJust,
                                                       isNothing, mapMaybe)
 import           Data.Word                           (Word64)
 import           Network.Socket.Internal             (SockAddr)
-import           Control.Concurrent.STM              (TVar, STM, newTVar,
+import           Control.Concurrent.STM              (TMVar, TVar, STM, newTVar,
                                                       writeTVar, readTVar,
                                                       modifyTVar', readTVarIO,
                                                       registerDelay, atomically,
-                                                      retry)
+                                                      retry, newEmptyTMVar, putTMVar)
 
 import           Network.WireGuard.Internal.Constant   (maxActiveSessions)
 import           Network.WireGuard.Internal.Data.Types (KeyPair, PresharedKey, PeerId,
@@ -69,7 +70,7 @@ data Device = Device
             { -- | Interface name (EG. wg0)
               intfName     :: String,
               -- | Local static key. 32 bits Curve25519 key couple.
-              localKey     :: TVar (Maybe KeyPair),
+              localKey     :: TMVar KeyPair,
               -- | TODO: refactor this key to the peer datastructure.
               presharedKey :: TVar (Maybe PresharedKey),
               -- | Firewall mark.
@@ -92,21 +93,21 @@ data Peer = Peer
             remotePub         :: !PublicKey,
             -- | Peer's asynchronous processes listening to various
             -- internal queues.
-            asyncs            :: TVar (Maybe PeerStreamAsyncs),
+            asyncs            :: TMVar PeerStreamAsyncs,
             -- | Queues associated with this peer.
-            queues            :: TVar (Maybe PeerQueues),
+            queues            :: TMVar PeerQueues,
             -- | Authorized origin IP ranges for this peer.
             ipmasks           :: TVar [IPRange],
             -- | Last known remote address.
-            endPoint          :: TVar (Maybe SockAddr),
+            endPoint          :: TMVar SockAddr,
             lastHandshakeTime :: TVar (Maybe Time),
             receivedBytes     :: TVar Word64,
             transferredBytes  :: TVar Word64,
             keepaliveInterval :: TVar Int,
             -- | Handshake initiation state.
-            initiatorWait     :: TVar (Maybe HandshakeInit),
+            handshakeInitSt   :: TVar (Maybe HandshakeInit),
             -- | Handshake response state.
-            responderWait     :: TVar (Maybe HandshakeResp),
+            handshakeRespSt   :: TVar (Maybe HandshakeResp),
             -- | Last two active sessions
             sessions          :: TVar [Session],
             -- | Last init handshake time. Used to prevent replay attacks.
@@ -163,7 +164,7 @@ data Session = Session
 -- | Creates a new device with its associated empty STM
 -- shared variables.
 createDevice :: String -> STM Device
-createDevice intf = Device intf <$> newTVar Nothing
+createDevice intf = Device intf <$> newEmptyTMVar
                                 <*> newTVar Nothing
                                 <*> newTVar 0
                                 <*> newTVar 0
@@ -175,10 +176,10 @@ createDevice intf = Device intf <$> newTVar Nothing
 -- | Creates a new Peer with its associated empty STM
 -- shared variables.
 createPeer :: PublicKey -> STM Peer
-createPeer rpub = Peer rpub <$> newTVar Nothing
-                            <*> newTVar Nothing
+createPeer rpub = Peer rpub <$> newEmptyTMVar
+                            <*> newEmptyTMVar
                             <*> newTVar []
-                            <*> newTVar Nothing
+                            <*> newEmptyTMVar
                             <*> newTVar Nothing
                             <*> newTVar 0
                             <*> newTVar 0
@@ -198,8 +199,8 @@ invalidateSessions Device{..} = do
   where
     invalidatePeerSessions Peer{..} = do
         writeTVar lastHandshakeTime Nothing
-        writeTVar initiatorWait Nothing
-        writeTVar responderWait Nothing
+        writeTVar handshakeInitSt Nothing
+        writeTVar handshakeRespSt Nothing
         writeTVar sessions []
 
 buildRouteTables :: Device -> STM ()
@@ -235,22 +236,22 @@ nextNonce Session{..} = do
     writeTVar sessionCounter (nonce + 1)
     return nonce
 
-eraseInitiatorWait :: Device -> Peer -> Maybe Index -> STM Bool
-eraseInitiatorWait device Peer{..} index = do
-    miwait <- readTVar initiatorWait
+eraseHandshakeInit :: Device -> Peer -> Maybe Index -> STM Bool
+eraseHandshakeInit device Peer{..} index = do
+    miwait <- readTVar handshakeInitSt
     case miwait of
         Just iwait | isNothing index || initOurIndex iwait == fromJust index -> do
-            writeTVar initiatorWait Nothing
+            writeTVar handshakeInitSt Nothing
             when (isNothing index) $ removeIndex device (initOurIndex iwait)
             return True
         _ -> return False
 
-eraseResponderWait :: Device -> Peer -> Maybe Index -> STM Bool
-eraseResponderWait device Peer{..} index = do
-    mrwait <- readTVar responderWait
+eraseHandshakeResp :: Device -> Peer -> Maybe Index -> STM Bool
+eraseHandshakeResp device Peer{..} index = do
+    mrwait <- readTVar handshakeRespSt
     case mrwait of
         Just rwait | isNothing index || respOurIndex rwait == fromJust index -> do
-            writeTVar responderWait Nothing
+            writeTVar handshakeRespSt Nothing
             when (isNothing index) $ removeIndex device (respOurIndex rwait)
             return True
         _ -> return False
@@ -281,7 +282,7 @@ findSession peer index = do
     case sessions' of
         (s:_) -> return (Just (Right s))
         []    -> do
-            mrwait <- readTVar (responderWait peer)
+            mrwait <- readTVar (handshakeRespSt peer)
             case mrwait of
                 Just rwait | respOurIndex rwait == index -> return (Just (Left rwait))
                 _                                        -> return Nothing
@@ -314,4 +315,7 @@ updateTai64n peer tai64n = do
         return True
 
 updateEndPoint :: Peer -> SockAddr -> STM ()
-updateEndPoint peer sock = writeTVar (endPoint peer) (Just sock)
+updateEndPoint peer sock = putTMVar (endPoint peer) sock
+
+appendNewSessionToState :: Peer -> STM ()
+appendNewSessionToState = undefined

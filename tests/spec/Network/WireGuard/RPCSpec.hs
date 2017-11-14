@@ -1,7 +1,7 @@
 module Network.WireGuard.RPCSpec (spec) where
 
 import Control.Monad.STM                           (atomically, STM)
-import Control.Concurrent.STM.TVar                 (writeTVar)
+import Control.Concurrent.STM                      (writeTVar, putTMVar)
 import           Data.Attoparsec.ByteString.Char8  (parse, eitherResult, feed)
 import qualified Data.ByteArray             as BA  (convert)
 import qualified Data.ByteString            as BS  (ByteString)
@@ -262,7 +262,7 @@ spec = do
 getGenericPeer :: BS.ByteString -> STM Peer
 getGenericPeer pub = do
   peer <- createPeer pubKey
-  writeTVar (endPoint peer) $ Just $ SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)
+  putTMVar  (endPoint peer) $ SockAddrInet 1337 $ tupleToHostAddress (192,168,1,1)
   writeTVar (receivedBytes peer) 777 
   writeTVar (transferredBytes peer) 778
   writeTVar (lastHandshakeTime peer) (Just 1502895867)
@@ -289,9 +289,9 @@ getTestPeerTwoRanges publicKeyHexBytes = do
 getTestDevice :: BS.ByteString -> BS.ByteString -> STM Device
 getTestDevice pkHex pshHex = do
   dev <- createDevice "wg0"
-  let keyPair = DH.dhBytesToPair $ BA.convert pkHex
+  let keyPair = fromJust $ DH.dhBytesToPair $ BA.convert pkHex
   let psh = Just $ BA.convert pshHex :: Maybe PresharedKey
-  writeTVar (localKey dev) keyPair
+  putTMVar  (localKey dev) keyPair
   writeTVar (presharedKey dev) psh
   writeTVar (port dev) 12912
   return dev
@@ -299,8 +299,8 @@ getTestDevice pkHex pshHex = do
 getSetTestDevice :: BS.ByteString -> Int -> Word -> STM Device
 getSetTestDevice pkHex p fwm = do
   dev <- createDevice "wg0"
-  let keyPair = DH.dhBytesToPair $ BA.convert pkHex
-  writeTVar (localKey dev) keyPair
+  let keyPair = fromJust $ DH.dhBytesToPair $ BA.convert pkHex
+  putTMVar  (localKey dev) keyPair
   writeTVar (fwmark dev) fwm
   writeTVar (port dev) p
   return dev
@@ -308,8 +308,8 @@ getSetTestDevice pkHex p fwm = do
 getSetTestDeviceWithPeers :: BS.ByteString -> Int -> Word -> [(PeerId, Peer)] -> STM Device
 getSetTestDeviceWithPeers pkHex p fwm prs = do
   dev <- createDevice "wg0"
-  let keyPair = DH.dhBytesToPair $ BA.convert pkHex
-  writeTVar (localKey dev) keyPair
+  let keyPair = fromJust $ DH.dhBytesToPair $ BA.convert pkHex
+  putTMVar  (localKey dev) keyPair
   writeTVar (fwmark dev) fwm
   writeTVar (port dev) p
   writeTVar (peers dev) $ HM.fromList prs
@@ -318,9 +318,9 @@ getSetTestDeviceWithPeers pkHex p fwm prs = do
 getTestDeviceWithPeers :: BS.ByteString -> BS.ByteString -> [(PeerId, Peer)] -> STM Device
 getTestDeviceWithPeers pkHex pshHex prs = do
   dev <- createDevice "wg0"
-  let keyPair = DH.dhBytesToPair $ BA.convert pkHex
+  let keyPair = fromJust $ DH.dhBytesToPair $ BA.convert pkHex
   let psh = Just $ BA.convert pshHex :: Maybe PresharedKey
-  writeTVar (localKey dev) keyPair
+  putTMVar  (localKey dev) keyPair
   writeTVar (presharedKey dev) psh
   writeTVar (port dev) 12912
   writeTVar (peers dev) $ HM.fromList prs
@@ -329,7 +329,7 @@ getTestDeviceWithPeers pkHex pshHex prs = do
 getPeer1 :: BS.ByteString -> STM Peer
 getPeer1 pubHex = do
   peer <- createPeer pubKey
-  writeTVar (endPoint peer) . Just $ SockAddrInet6 51820 0 (toHostAddress6 $ read "abcd:23::33") 2
+  putTMVar (endPoint peer) $ SockAddrInet6 51820 0 (toHostAddress6 $ read "abcd:23::33") 2
   writeTVar (ipmasks peer) ipRange 
   return peer
   where
@@ -339,7 +339,7 @@ getPeer1 pubHex = do
 getPeer2 :: BS.ByteString -> STM Peer
 getPeer2 pubHex = do
   peer <- createPeer pubKey
-  writeTVar (endPoint peer) $ Just $ SockAddrInet 3233 $ tupleToHostAddress (182,122,22,19)
+  putTMVar  (endPoint peer) $ SockAddrInet 3233 $ tupleToHostAddress (182,122,22,19)
   writeTVar (receivedBytes peer) 2224
   writeTVar (transferredBytes peer) 38333
   writeTVar (keepaliveInterval peer) 111
@@ -352,7 +352,7 @@ getPeer2 pubHex = do
 getPeer3 :: BS.ByteString -> STM Peer
 getPeer3 pubHex = do
   peer <- createPeer pubKey
-  writeTVar (endPoint peer) $ Just $ SockAddrInet 51820 $ tupleToHostAddress (5, 152, 198, 39)
+  putTMVar  (endPoint peer) $ SockAddrInet 51820 $ tupleToHostAddress (5, 152, 198, 39)
   writeTVar (receivedBytes peer) 1929999999 
   writeTVar (transferredBytes peer) 1212111
   writeTVar (ipmasks peer) ipRange 

@@ -30,8 +30,9 @@ import           System.IO                                   (hPrint, stderr)
 import           System.Posix.Time                           (epochTime)
 import           System.Random                               (randomIO)
 
-import           Control.Concurrent.STM.TVar                 (readTVarIO, modifyTVar',
-                                                              writeTVar, newTVar, readTVar)
+import           Control.Concurrent.STM                      (readTVarIO, modifyTVar',
+                                                              writeTVar, newTVar, readTVar,
+                                                              tryReadTMVar)
 
 import           Network.WireGuard.Internal.Constant         (heartbeatWaitTime, handshakeRetryTime,
                                                               timestampLength, handshakeStopTime,
@@ -55,33 +56,34 @@ import           Network.WireGuard.Internal.State            (Device(Device), Ha
                                                               endPoint, waitForSession, nextNonce,
                                                               sessionKey, theirIndex, renewTime, transferredBytes,
                                                               lastTransferTime, peers, updateTai64n, 
-                                                              acquireEmptyIndex, eraseResponderWait,
-                                                              responderWait, indexMap, initiatorWait,
+                                                              acquireEmptyIndex, eraseHandshakeInit,
+                                                              handshakeInitSt, indexMap, handshakeRespSt,
                                                               initOurIndex, initNoise, Session(Session),
-                                                              eraseInitiatorWait, addSession,
+                                                              eraseHandshakeInit, addSession,
                                                               lastHandshakeTime, updateEndPoint,
                                                               findSession, respOurIndex, respTheirIndex,
                                                               respSessionKey, remotePub, remotePub,
                                                               lastReceiveTime, receivedBytes, lastKeepaliveTime,
                                                               initRekeyAttemptTime, initRekeyTimeout, respStopTime,
-                                                              filterSessions, expireTime, 
+                                                              filterSessions, expireTime, eraseHandshakeResp,
                                                               HandshakeInit(HandshakeInit))
 import           Network.WireGuard.Internal.Data.Types       (Time, TunPacket, UdpPacket,
                                                               WireGuardError(..), KeyPair, PresharedKey,
                                                               TAI64n, getPeerId)
 import           Network.WireGuard.Internal.Data.QueueSystem (DeviceQueues(..))
 import           Network.WireGuard.Internal.Util             (ignoreSyncExceptions, withJust,
-                                                              retryWithBackoff, dropUntilM)
+                                                              retryWithBackoff, dropUntilM,
+                                                              assertJust)
 import           Network.WireGuard.Internal.Stream.Peer      (spawnDevicePeerProcesses)
 
 runCore :: Device -> DeviceQueues -> IO ()
 runCore device devQueues = do
     threads <- getNumCapabilities
-    spawnDevicePeerProcesses device $ writeUdpQueue devQueues
+    spawnDevicePeerProcesses device (writeUdpQueue devQueues) (writeTunQueue devQueues)
     loop threads []
   where
     heartbeatLoop = forever $ ignoreSyncExceptions $ do
-        withJust (readTVarIO (localKey device)) $ \key ->
+        withJust (atomically $ tryReadTMVar (localKey device)) $ \key ->
             runHeartbeat device key (writeUdpQueue devQueues)
         -- TODO: use accurate timer
         threadDelay heartbeatWaitTime
@@ -123,7 +125,7 @@ handleReadUdp device readUdpChan writeTunChan writeUdpChan = forever $ do
 processTunPacket :: Device -> PacketQueue UdpPacket -> TunPacket
                  -> ExceptT WireGuardError IO UdpPacket
 processTunPacket device@Device{..} writeUdpChan packet = do
-    key <- assertJust DeviceNotReadyError $ liftIO (readTVarIO localKey)
+    key <- assertJust DeviceNotReadyError $ liftIO (atomically $ tryReadTMVar localKey)
     psk <- liftIO (readTVarIO presharedKey)
     parsedPacket <- liftIO $ parseIPPacket packet
     peer <- assertJust DestinationNotReachableError $ case parsedPacket of
@@ -137,7 +139,7 @@ processTunPacket device@Device{..} writeUdpChan packet = do
         Just session -> return session
         Nothing      -> do
             now0 <- liftIO epochTime
-            endp0 <- assertJust EndPointUnknownError $ liftIO $ readTVarIO (endPoint peer)
+            endp0 <- assertJust EndPointUnknownError $ liftIO $ atomically $ tryReadTMVar (endPoint peer)
             liftIO $ void $ checkAndTryInitiateHandshake device key psk writeUdpChan peer endp0 now0
             assertJust OutdatedPacketError $ liftIO $ waitForSession (handshakeRetryTime * 1000000) peer
     nonce <- liftIO $ atomically $ nextNonce session
@@ -145,7 +147,7 @@ processTunPacket device@Device{..} writeUdpChan packet = do
         encrypted = runPut $ buildPacket (error "internal error") $
             PacketData (theirIndex session) nonce msg authtag
     now <- liftIO epochTime
-    endp <- assertJust EndPointUnknownError $ liftIO $ readTVarIO (endPoint peer)
+    endp <- assertJust EndPointUnknownError $ liftIO $ atomically $ tryReadTMVar (endPoint peer)
     when (now >= renewTime session) $ liftIO $
         void $ checkAndTryInitiateHandshake device key psk writeUdpChan peer endp now
     liftIO $ atomically $ modifyTVar' (transferredBytes peer) (+fromIntegral (BA.length packet))
@@ -155,7 +157,7 @@ processTunPacket device@Device{..} writeUdpChan packet = do
 processUdpPacket :: Device -> UdpPacket
                  -> ExceptT WireGuardError IO (Maybe (Either UdpPacket TunPacket))
 processUdpPacket device@Device{..} (packet, sock) = do
-    key <- assertJust DeviceNotReadyError $ liftIO (readTVarIO localKey)
+    key <- assertJust DeviceNotReadyError $ liftIO (atomically $ tryReadTMVar localKey)
     psk <- liftIO (readTVarIO presharedKey)
     let mp = runGet (parsePacket (getMac1 (snd key) psk)) packet
     case mp of
@@ -181,10 +183,10 @@ processPacket device@Device{..} key psk sock HandshakeInitiation{..} = do
             seed <- liftIO randomIO
             ourindex <- liftIO $ atomically $ do
                 ourindex <- acquireEmptyIndex device peer seed
-                void $ eraseResponderWait device peer Nothing
+                void $ eraseHandshakeResp device peer Nothing
                 let rwait = HandshakeResp ourindex senderIndex
                         (addTime now handshakeStopTime) sks
-                writeTVar (responderWait peer) (Just rwait)
+                writeTVar (handshakeRespSt peer) (Just rwait)
                 return ourindex
             let responsePacket = runPut $ buildPacket (getMac1 rpub psk) $
                     HandshakeResponse ourindex senderIndex reply
@@ -193,7 +195,7 @@ processPacket device@Device{..} key psk sock HandshakeInitiation{..} = do
 processPacket device@Device{..} _key _psk sock HandshakeResponse{..} = do
     peer <- assertJust UnknownIndexError $
         HM.lookup receiverIndex <$> liftIO (readTVarIO indexMap)
-    iwait <- assertJust OutdatedPacketError $ liftIO (readTVarIO (initiatorWait peer))
+    iwait <- assertJust OutdatedPacketError $ liftIO (readTVarIO (handshakeInitSt peer))
     when (initOurIndex iwait /= receiverIndex) $ throwE OutdatedPacketError
     let state1 = initNoise iwait
         outcome = recvSecondMessage state1 encryptedPayload
@@ -209,7 +211,7 @@ processPacket device@Device{..} _key _psk sock HandshakeResponse{..} = do
             when (BA.length decryptedPayload /= 0) $
                 throwE $ InvalidWGPacketError "empty payload expected"
             succeeded <- liftIO $ atomically $ do
-                erased <- eraseInitiatorWait device peer (Just receiverIndex)
+                erased <- eraseHandshakeInit device peer (Just receiverIndex)
                 when erased $ do
                     addSession device peer newsession
                     writeTVar (lastHandshakeTime peer) (Just now)
@@ -237,7 +239,7 @@ processPacket device@Device{..} _key _psk sock PacketData{..} = do
         Nothing               -> throwE DecryptFailureError
         Just decryptedPayload -> do
             when isFromResponderWait $ liftIO $ atomically $ do
-                erased <- eraseResponderWait device peer (Just receiverIndex)
+                erased <- eraseHandshakeResp device peer (Just receiverIndex)
                 when erased $ do
                     addSession device peer session
                     writeTVar (lastHandshakeTime peer) (Just now)
@@ -268,19 +270,19 @@ runHeartbeat device key chan = do
     peers' <- readTVarIO (peers device)
     forM_ peers' $ \peer -> do
         reinitiate <- atomically $ do
-            miwait <- readTVar (initiatorWait peer)
+            miwait <- readTVar (handshakeInitSt peer)
             case miwait of
                 Just iwait | now >= initRekeyAttemptTime iwait -> do
-                    void $ eraseInitiatorWait device peer Nothing
+                    void $ eraseHandshakeInit device peer Nothing
                     return Nothing
                 Just iwait | now >= initRekeyTimeout iwait -> do
-                    void $ eraseInitiatorWait device peer Nothing
+                    void $ eraseHandshakeInit device peer Nothing
                     return (Just (initRekeyAttemptTime iwait))
                 _ -> return Nothing
-        when (isJust reinitiate) $ withJust (readTVarIO (endPoint peer)) $ \endp ->
+        when (isJust reinitiate) $ withJust (atomically $ tryReadTMVar (endPoint peer)) $ \endp ->
             void $ tryInitiateHandshakeIfEmpty device key psk chan peer endp reinitiate
-        atomically $ withJust (readTVar (responderWait peer)) $ \rwait ->
-            when (now >= respStopTime rwait) $ void $ eraseResponderWait device peer Nothing
+        atomically $ withJust (readTVar (handshakeRespSt peer)) $ \rwait ->
+            when (now >= respStopTime rwait) $ void $ eraseHandshakeResp device peer Nothing
         atomically $ filterSessions device peer ((now<).expireTime)
         lastrecv <- readTVarIO (lastReceiveTime peer)
         lastsent <- readTVarIO (lastTransferTime peer)
@@ -288,7 +290,7 @@ runHeartbeat device key chan = do
         when (lastsent < lastrecv && lastrecv <= addTime now (-sessionKeepaliveTime)) $ do
             atomically $ writeTVar (lastTransferTime peer) now
             atomically $ writeTVar (lastReceiveTime peer) now
-            withJust (readTVarIO (endPoint peer)) $ \endp ->
+            withJust (atomically $ tryReadTMVar (endPoint peer)) $ \endp ->
                 withJust (getSession peer) $ \session -> do
                     nonce <- atomically $ nextNonce session
                     let (msg, authtag) = encryptMessage (sessionKey session) nonce mempty
@@ -298,15 +300,15 @@ runHeartbeat device key chan = do
         when (lastrecv < lastsent && lastkeep < lastsent && lastsent <= addTime now (-(sessionKeepaliveTime + handshakeRetryTime))) $ do
             atomically $ writeTVar (lastTransferTime peer) now
             atomically $ writeTVar (lastReceiveTime peer) now
-            withJust (readTVarIO (endPoint peer)) $ \endp ->
+            withJust (atomically $ tryReadTMVar (endPoint peer)) $ \endp ->
                 void $ checkAndTryInitiateHandshake device key psk chan peer endp now
 
 checkAndTryInitiateHandshake :: Device -> KeyPair -> Maybe PresharedKey
                              -> PacketQueue UdpPacket -> Peer -> SockAddr -> Time
                              -> IO Bool
 checkAndTryInitiateHandshake device key psk chan peer@Peer{..} endp now = do
-    initiated <- readAndVerifyStopTime initRekeyAttemptTime initiatorWait (eraseInitiatorWait device peer Nothing)
-    responded <- readAndVerifyStopTime respStopTime responderWait (eraseResponderWait device peer Nothing)
+    initiated <- readAndVerifyStopTime initRekeyAttemptTime handshakeInitSt (eraseHandshakeInit device peer Nothing)
+    responded <- readAndVerifyStopTime respStopTime handshakeRespSt (eraseHandshakeResp device peer Nothing)
     if initiated || responded
       then return False
       else tryInitiateHandshakeIfEmpty device key psk chan peer endp Nothing
@@ -330,7 +332,7 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
         Right (payload, state1) = sendFirstMessage state0 timestamp
         timestamp = BA.convert (genTai64n now)
     mpacket <- atomically $ do
-        isEmpty <- isNothing <$> readTVar initiatorWait
+        isEmpty <- isNothing <$> readTVar handshakeInitSt
         if isEmpty
           then do
             index <- acquireEmptyIndex device peer seed
@@ -338,7 +340,7 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
                     (addTime now handshakeRetryTime)
                     (fromMaybe (addTime now handshakeStopTime) stopTime)
                     state1
-            writeTVar initiatorWait (Just iwait)
+            writeTVar handshakeInitSt (Just iwait)
             let packet = runPut $ buildPacket (getMac1 remotePub psk) $
                     HandshakeInitiation index payload
             return (Just packet)
@@ -348,13 +350,6 @@ tryInitiateHandshakeIfEmpty device key psk chan peer@Peer{..} endp stopTime = do
         Nothing     -> return False
 
 
-
-assertJust :: Monad m => e -> ExceptT e m (Maybe a) -> ExceptT e m a
-assertJust err ma = do
-    res <- ma
-    case res of
-        Just a  -> return a
-        Nothing -> throwE err
 
 addTime :: Time -> Int -> Time
 addTime (CTime now) secs = CTime (now + fromIntegral secs)

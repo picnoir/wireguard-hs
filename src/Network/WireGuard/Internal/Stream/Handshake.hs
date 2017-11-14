@@ -29,7 +29,8 @@ import           Control.Monad                          (when, unless, void)
 import           Control.Monad.Trans.Except             (ExceptT, throwE)
 import           Control.Monad.STM                      (STM)
 import           Control.Monad.Trans.Class              (lift)
-import           Control.Concurrent.STM.TVar            (readTVar, writeTVar, newTVar)
+import           Control.Concurrent.STM                 (readTVar, writeTVar, newTVar,
+                                                         tryReadTMVar)
 import           Crypto.Noise                           (HandshakeRole(..))
 import           Crypto.Noise.DH                        (dhPubToBytes)
 import           Crypto.Hash.BLAKE2.BLAKE2s             (finalize, update, initialize,
@@ -47,9 +48,9 @@ import Network.WireGuard.Internal.Data.Handshake        (HandshakeInitSeed(..), 
                                                          HandshakeError(..))
 import Network.WireGuard.Internal.State                 (Device(..), Peer(..),
                                                          acquireEmptyIndex, HandshakeInit(..),
-                                                         updateTai64n, eraseResponderWait,
+                                                         updateTai64n, eraseHandshakeResp,
                                                          HandshakeResp(..), Session(..),
-                                                         eraseInitiatorWait, addSession,
+                                                         eraseHandshakeInit, addSession,
                                                          updateEndPoint)
 import Network.WireGuard.Internal.Packet                (Packet(..), buildPacket)
 import Network.WireGuard.Internal.Noise                 (newNoiseState, sendFirstMessage,
@@ -59,27 +60,29 @@ import Network.WireGuard.Internal.Noise                 (newNoiseState, sendFirs
 -- | Generates an hanshake initialisation packet. Assigns
 --   the initiatorWait for the remote pair and returns the
 --   content of the outgoing UDP initiation packet.
-handshakeInit :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey
-                            -> Peer -> Maybe Time -> SockAddr
+handshakeInit :: HandshakeInitSeed -> Device -> Peer
+                            -> Maybe Time -> SockAddr
                             -> ExceptT HandshakeError STM UdpPacket
-handshakeInit seed device key psk peer@Peer{..} stopTime sock = do
+handshakeInit seed device peer@Peer{..} stopTime sock = do
+    key <- assertJust MissingLocalKeyPair $ lift $ tryReadTMVar $ localKey device
+    psk <- lift $ readTVar $ presharedKey device
     let ekey   = handshakeEphemeralKey seed
         now    = handshakeNowTS seed
         hsSeed = handshakeSeed seed
         state0 = newNoiseState key psk ekey (Just remotePub) InitiatorRole
         Right (payload, state1) = sendFirstMessage state0 timestamp
         timestamp = BA.convert (genTai64n now)
-    isEmpty <- lift $ isNothing <$> readTVar initiatorWait
+    isEmpty <- lift $ isNothing <$> readTVar handshakeInitSt
     if isEmpty
       then do
         index <- lift $ acquireEmptyIndex device peer hsSeed
-        let iwait = HandshakeInit index
+        let handInit = HandshakeInit index
                 (addTime now handshakeRetryTime)
                 (fromMaybe (addTime now handshakeStopTime) stopTime)
                 state1
             packet = runPut . buildPacket (getMac1 remotePub psk) $
                 HandshakeInitiation index payload
-        lift $ writeTVar initiatorWait (Just iwait)
+        lift $ writeTVar handshakeInitSt (Just handInit)
         return (packet, sock)
       else throwE OngoingHandshake
 
@@ -94,10 +97,7 @@ handshakeInit seed device key psk peer@Peer{..} stopTime sock = do
 processHandshakeInitiation :: HandshakeInitSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
               -> ExceptT HandshakeError STM UdpPacket
 processHandshakeInitiation HandshakeInitSeed{..} device@Device{..} key psk sock HandshakeInitiation{..} = do
-    let ekey    = handshakeEphemeralKey 
-        now     = handshakeNowTS 
-        hsSeed  = handshakeSeed 
-        state0  = newNoiseState key psk ekey Nothing ResponderRole
+    let state0  = newNoiseState key psk handshakeEphemeralKey Nothing ResponderRole
         outcome = recvFirstMessageAndReply state0 encryptedPayload mempty
     case outcome of
         Left err                                   -> throwE $ NoiseProtocolError err
@@ -109,12 +109,13 @@ processHandshakeInitiation HandshakeInitSeed{..} device@Device{..} key psk sock 
             notReplayAttack <- lift $ updateTai64n peer (BA.convert decryptedPayload)
             unless notReplayAttack $ throwE IsReplayAttack 
             ourindex <- do
-                ourindex <- lift $ acquireEmptyIndex device peer hsSeed
-                void $ lift $ eraseResponderWait device peer Nothing
+                ourindex <- lift $ acquireEmptyIndex device peer handshakeSeed
                 let rwait = HandshakeResp ourindex senderIndex
-                        (addTime now handshakeStopTime) sks
-                lift $ writeTVar (responderWait peer) (Just rwait)
+                        (addTime handshakeNowTS handshakeStopTime) sks
+                void $ lift $ eraseHandshakeResp device peer Nothing
+                lift $ writeTVar (handshakeRespSt peer) (Just rwait)
                 return ourindex
+            -- TODO: update session.
             let responsePacket = runPut $ buildPacket (getMac1 rpub psk) $
                     HandshakeResponse ourindex senderIndex reply
             return (responsePacket, sock)
@@ -128,6 +129,7 @@ processHandshakeInitiation _ _ _ _ _ _ = throwE $ UnexpectedIncomingPacketType
 --     2- Erases the initiatorWait structure from the STM state.
 --     3- Add the session to the STM state.
 --     4- Update the last handshake time with the remote peer in the STM state.
+--     5- Update the lest known peer endopoint.
 --
 --   Throws:
 --     - NoiseProtocolError.
@@ -139,7 +141,7 @@ processHandshakeResponse :: HandshakeRespSeed -> Device -> KeyPair -> Maybe Pres
 processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{..} = do
     peer <- assertJust CannotFindPeerIndex $
         HM.lookup receiverIndex <$> lift (readTVar indexMap)
-    iwait <- assertJust PacketOutdated $ lift (readTVar (initiatorWait peer))
+    iwait <- assertJust PacketOutdated $ lift (readTVar (handshakeInitSt peer))
     when (initOurIndex iwait /= receiverIndex) $ throwE PacketOutdated 
     let state1 = initNoise iwait
         outcome = recvSecondMessage state1 encryptedPayload
@@ -154,7 +156,7 @@ processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{
             when (BA.length decryptedPayload /= 0) $
                 throwE ResponsePayloadShouldBeEmpty
             succeeded <- lift $ do
-                erased <- eraseInitiatorWait device peer (Just receiverIndex)
+                erased <- eraseHandshakeInit device peer (Just receiverIndex)
                 when erased $ do
                     addSession device peer newsession
                     writeTVar (lastHandshakeTime peer) (Just now)
