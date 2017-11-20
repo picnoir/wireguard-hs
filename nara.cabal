@@ -131,6 +131,9 @@ test-suite nara-test
     , network
     , iproute
     , unordered-containers
+    , unix
+    , transformers
   other-modules:
-    Network.WireGuard.RPCSpec
+    Network.WireGuard.RPCSpec,
+    Network.WireGuard.HandshakeSpec
   default-language: Haskell2010
