@@ -25,7 +25,7 @@ import Control.Concurrent.Async                    (async)
 import Control.Concurrent.STM                      (readTVarIO, STM,
                                                     atomically, readTMVar,
                                                     putTMVar, modifyTVar',
-                                                    writeTVar, readTVar)
+                                                    writeTVar, readTVar, tryReadTMVar)
 import Control.Monad                               (when, unless)
 import Control.Monad.Trans.Class                   (lift)
 import Control.Monad.Trans.Except                  (ExceptT, throwE, runExceptT)
@@ -91,13 +91,13 @@ decryptIncomingMessages dev peer pq tunOutQ = do
     case eEncryptedPacket of
         Left err -> error err
         Right encryptedPacket -> do
-            eDecryptedPacket   <- atomically $ runExceptT $ decryptPacket peer encryptedPacket
+            now <- epochTime
+            eDecryptedPacket <- atomically $ runExceptT $ decryptPacket peer encryptedPacket now
             case eDecryptedPacket of 
                 Right decryptedPacket -> do
                     parsedPacket <- parseIPPacket decryptedPacket
                     ok <- atomically $ runExceptT $ validateDecryptedPacket peer dev parsedPacket
                     when (isRight ok) $ do
-                        now <- epochTime
                         atomically $
                           updateStateAfterDecrypt peer decryptedPacket (snd udpEncryptedPacket) now
                         pushPacketQueue tunOutQ decryptedPacket
@@ -107,10 +107,15 @@ decryptIncomingMessages dev peer pq tunOutQ = do
 encryptOutgoingMessages :: Peer -> Device -> PacketQueue TunPacket -> PacketQueue UdpPacket -> IO ()
 encryptOutgoingMessages peer dev encryptQ writeUdpChan = do
   packet   <- popPacketQueue encryptQ
+  isSession <- isJust <$> atomically (tryReadTMVar $ activeSession peer)
+  when isSession $ initiateHandshake peer dev writeUdpChan
+  -- Wait for an established session
+  atomically $ readTMVar $ activeSession peer
   msession <- getSession peer
   session  <- case msession of
       Just session -> return session
-      Nothing      -> undefined
+      _ -> error "Missing active session." 
+
   now <- epochTime
   when (now >= renewTime session) $
       initiateHandshake peer dev writeUdpChan
@@ -157,15 +162,15 @@ generateHandshakeSeed dev peer = do
 processIncomingCookieMessages :: Peer -> PeerQueues -> IO ()
 processIncomingCookieMessages _ _ = undefined
 
-decryptPacket :: Peer -> Packet -> ExceptT DecryptPacketError STM ScrubbedBytes
-decryptPacket peer PacketData{..} = do
+decryptPacket :: Peer -> Packet -> Time -> ExceptT DecryptPacketError STM ScrubbedBytes
+decryptPacket peer PacketData{..} now = do
     fstPckSinceHandshake <- isJust <$> lift (readTVar (handshakeRespSt peer))
-    when fstPckSinceHandshake $ lift $ appendNewSessionToState peer
+    when fstPckSinceHandshake $ lift $ appendNewSessionToState peer now
     session <- assertJust MissingSession $ lift (listToMaybe <$> readTVar (sessions peer))
     case decryptMessage (sessionKey session) counter (encryptedPayload, authTag) of
         Nothing               -> throwE DecryptError
         Just decryptedPayload -> return decryptedPayload
-decryptPacket _ _ = throwE UnexpectedIncomingPacket
+decryptPacket _ _ _ = throwE UnexpectedIncomingPacket
 
 validateDecryptedPacket :: Peer -> Device -> IPPacket -> ExceptT ValidatePacketError STM ()
 validateDecryptedPacket peer dev packet = do

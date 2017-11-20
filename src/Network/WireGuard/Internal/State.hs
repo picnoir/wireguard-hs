@@ -48,16 +48,19 @@ import qualified Data.HashMap.Strict                 as HM (HashMap, empty, memb
 import           Data.IP                             (IPRange (..), IPv4, IPv6)
 import qualified Data.IP.RouteTable                  as RT (IPRTable, empty, fromList)
 import           Data.Maybe                          (catMaybes, fromJust,
-                                                      isNothing, mapMaybe)
+                                                      isNothing, mapMaybe,
+                                                      fromMaybe)
 import           Data.Word                           (Word64)
 import           Network.Socket.Internal             (SockAddr)
 import           Control.Concurrent.STM              (TMVar, TVar, STM, newTVar,
                                                       writeTVar, readTVar,
                                                       modifyTVar', readTVarIO,
                                                       registerDelay, atomically,
-                                                      retry, newEmptyTMVar, putTMVar)
+                                                      retry, newEmptyTMVar)
 
-import           Network.WireGuard.Internal.Constant   (maxActiveSessions)
+import           Network.WireGuard.Internal.Constant   (maxActiveSessions, sessionRenewTime,
+                                                        handshakeRetryTime, sessionExpireTime)
+import           Network.WireGuard.Internal.Util       (writeMaybeTMVar, addTime)
 import           Network.WireGuard.Internal.Data.Types (KeyPair, PresharedKey, PeerId,
                                                         Index, PublicKey, Time,
                                                         TAI64n, SessionKey, Counter,
@@ -110,6 +113,9 @@ data Peer = Peer
             handshakeRespSt   :: TVar (Maybe HandshakeResp),
             -- | Last two active sessions
             sessions          :: TVar [Session],
+            -- | Variable used for internal synchronisation. Empty if there is no
+            --   active session, empty otherwise.
+            activeSession     :: TMVar (),
             -- | Last init handshake time. Used to prevent replay attacks.
             lastTai64n        :: TVar TAI64n,
             lastReceiveTime   :: TVar Time,
@@ -187,6 +193,7 @@ createPeer rpub = Peer rpub <$> newEmptyTMVar
                             <*> newTVar Nothing
                             <*> newTVar Nothing
                             <*> newTVar []
+                            <*> newEmptyTMVar
                             <*> newTVar mempty
                             <*> newTVar farFuture
                             <*> newTVar farFuture
@@ -315,7 +322,21 @@ updateTai64n peer tai64n = do
         return True
 
 updateEndPoint :: Peer -> SockAddr -> STM ()
-updateEndPoint peer sock = putTMVar (endPoint peer) sock
+updateEndPoint peer sock = writeMaybeTMVar (endPoint peer) (Just sock)
 
-appendNewSessionToState :: Peer -> STM ()
-appendNewSessionToState = undefined
+appendNewSessionToState :: Peer -> Time -> STM ()
+appendNewSessionToState peer now = do
+   prevS         <- readTVar $ sessions peer
+   handshakeRespM <-  readTVar $ handshakeRespSt peer
+   let handshakeResp = fromMaybe (error "No session") handshakeRespM
+   newCounter    <- newTVar 0
+   let newSession = Session (respOurIndex handshakeResp) (respTheirIndex handshakeResp) 
+                     (respSessionKey handshakeResp)
+                     (addTime now (sessionRenewTime + 2 * handshakeRetryTime))
+                     (addTime now sessionExpireTime)
+                     newCounter
+   let newS = case prevS of
+                 []     -> [newSession] 
+                 (ps:_) -> [newSession, ps]
+   writeTVar (sessions peer) newS
+   return ()

@@ -13,6 +13,7 @@ module Network.WireGuard.Internal.Util
   , assertJust
   , tryReadTMVar
   , writeMaybeTMVar
+  , addTime
   ) where
 
 import           Control.Concurrent                  (threadDelay)
@@ -26,12 +27,13 @@ import           Control.Monad.Trans.Except          (ExceptT, throwE)
 import           Data.Foldable                       (forM_)
 import           System.IO                           (hPutStrLn, stderr)
 import           Foreign                             (Ptr)
-import           Foreign.C                           (CSize(..), CInt(..))
+import           Foreign.C                           (CSize(..), CInt(..), CTime(..))
 import           Control.Concurrent.STM              (STM, TMVar, isEmptyTMVar,
                                                       tryTakeTMVar, swapTMVar,
                                                       putTMVar)
 
-import           Network.WireGuard.Internal.Constant (retryMaxWaitTime)
+import           Network.WireGuard.Internal.Constant   (retryMaxWaitTime)
+import           Network.WireGuard.Internal.Data.Types (Time)
 
 retryWithBackoff :: IO () -> IO ()
 retryWithBackoff = foreverWithBackoff . ignoreSyncExceptions
@@ -97,6 +99,9 @@ writeMaybeTMVar tv (Just v) = do
                                   then putTMVar  tv v
                                   else void $ swapTMVar tv v
 writeMaybeTMVar tv Nothing = void $ tryTakeTMVar tv 
+
+addTime :: Time -> Int -> Time
+addTime (CTime now) secs = CTime (now + fromIntegral secs)
 
 foreign import ccall unsafe "string.h" memset :: Ptr a -> CInt -> CSize -> IO ()
 foreign import ccall unsafe "string.h" memcpy :: Ptr a -> Ptr b -> CSize -> IO ()

@@ -115,7 +115,6 @@ processHandshakeInitiation HandshakeInitSeed{..} device@Device{..} key psk sock 
                 void $ lift $ eraseHandshakeResp device peer Nothing
                 lift $ writeTVar (handshakeRespSt peer) (Just rwait)
                 return ourindex
-            -- TODO: update session.
             let responsePacket = runPut $ buildPacket (getMac1 rpub psk) $
                     HandshakeResponse ourindex senderIndex reply
             return (responsePacket, sock)
