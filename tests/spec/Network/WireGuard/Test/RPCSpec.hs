@@ -1,4 +1,4 @@
-module Network.WireGuard.RPCSpec (spec) where
+module Network.WireGuard.Test.RPCSpec (spec) where
 
 import Control.Monad.STM                           (atomically, STM)
 import Control.Concurrent.STM                      (writeTVar, putTMVar)

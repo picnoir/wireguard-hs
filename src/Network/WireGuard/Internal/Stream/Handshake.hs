@@ -135,9 +135,9 @@ processHandshakeInitiation _ _ _ _ _ _ = throwE $ UnexpectedIncomingPacketType
 --     - ResponsePayloadShouldBeEmpty.
 --     - PacketOutdated.
 --     - UnexpectedIncomingPacketType
-processHandshakeResponse :: HandshakeRespSeed -> Device -> KeyPair -> Maybe PresharedKey -> SockAddr -> Packet
+processHandshakeResponse :: HandshakeRespSeed -> Device -> SockAddr -> Packet
               -> ExceptT HandshakeError STM ()
-processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{..} = do
+processHandshakeResponse now device@Device{..} sock HandshakeResponse{..} = do
     peer <- assertJust CannotFindPeerIndex $
         HM.lookup receiverIndex <$> lift (readTVar indexMap)
     iwait <- assertJust PacketOutdated $ lift (readTVar (handshakeInitSt peer))
@@ -163,7 +163,7 @@ processHandshakeResponse now device@Device{..} _key _psk sock HandshakeResponse{
             unless succeeded $ throwE PacketOutdated
             lift $ updateEndPoint peer sock
 
-processHandshakeResponse _ _ _ _ _ _ = throwE $ UnexpectedIncomingPacketType
+processHandshakeResponse _ _ _ _  = throwE $ UnexpectedIncomingPacketType
                                         "Expecting incoming handshake response packet"
 
 genTai64n :: Time -> TAI64n

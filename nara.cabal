@@ -113,12 +113,15 @@ library
 test-suite nara-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
+  include-dirs:
+      tests/spec
   hs-source-dirs:
       tests/spec
   ghc-options: -Wall -Werror
   build-depends:
       attoparsec
     , base == 4.9.*
+    , cereal
     , hspec
     , nara
     , bytestring
@@ -134,6 +137,7 @@ test-suite nara-test
     , unix
     , transformers
   other-modules:
-    Network.WireGuard.RPCSpec,
-    Network.WireGuard.HandshakeSpec
+    Network.WireGuard.Test.RPCSpec,
+    Network.WireGuard.Test.HandshakeSpec,
+    Network.WireGuard.Test.Utils
   default-language: Haskell2010
